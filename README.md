@@ -234,6 +234,12 @@ AWS deployment notes are in:
 docs/aws_deployment_checklist.md
 ```
 
+Model/S3/EC2 operations guide:
+
+```
+docs/model_s3_ec2_operations_guide.md
+```
+
 ---
 ## Limitations
 - **Limited feature set:** Features are restricted to historical demand, time, and weather. The model struggles to capture extreme peaks.
