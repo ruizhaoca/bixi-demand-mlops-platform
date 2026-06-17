@@ -58,13 +58,13 @@ def log_metrics(prefix: str, m: dict) -> None:
 def log_model(model, name: str = "model"):
     """Log a scikit-learn-compatible model (LGBM/XGB/HGB/FLAML).
 
-    cloudpickle is required: the default skops format cannot serialize FLAML's
-    AutoML wrapper or some estimator internals.
+    cloudpickle is required: the default skops format cannot serialize some
+    estimator internals. Uses ``artifact_path`` (MLflow 2.x API).
     """
     import mlflow.sklearn
 
     return mlflow.sklearn.log_model(
-        model, name=name,
+        model, artifact_path=name,
         serialization_format=mlflow.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
     )
 

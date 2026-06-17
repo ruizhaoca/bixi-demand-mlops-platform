@@ -36,9 +36,9 @@ class MlflowStack(Stack):
                             "AmazonSSMManagedInstanceCore")])
         artifact_bucket.grant_read_write(role)
 
-        # NOTE: AL2023's default python3 is 3.9, but MLflow 3.x needs >=3.10 — so
-        # we install python3.11 and bootstrap pip via ensurepip (no reliance on a
-        # python3.11-pip package). A swapfile avoids pip OOM. We do NOT `set -e`
+        # We run MLflow 2.x (stable classic UI). Install python3.11 and bootstrap
+        # pip via ensurepip (no reliance on a python3.11-pip package). A swapfile
+        # avoids pip OOM. We do NOT `set -e`
         # so a hiccup never silently aborts the rest, and we upload the bootstrap
         # log + listening-ports + service status to S3 for out-of-band debugging
         # (no SSH key / SSM RunCommand is restricted in this account).
@@ -51,7 +51,7 @@ class MlflowStack(Stack):
             "fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048",
             "chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile",
             "python3.11 -m pip install --upgrade pip",
-            "python3.11 -m pip install --no-cache-dir 'mlflow==3.14.0' boto3",
+            "python3.11 -m pip install --no-cache-dir 'mlflow==2.22.0' boto3",
             "mkdir -p /opt/mlflow",
             "cat >/etc/systemd/system/mlflow.service <<'EOF'",
             "[Unit]",
