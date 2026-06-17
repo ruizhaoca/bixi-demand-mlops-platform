@@ -119,6 +119,15 @@ def fit_predict(name: str, X_tr, y_tr, X_eval, params: dict | None = None):
 # --------------------------------------------------------------------------- #
 # Optuna Bayesian HPO (LightGBM family)
 # --------------------------------------------------------------------------- #
+def _subsample(X, y, n: int, seed: int = 42):
+    """Random row subsample for fast HPO/AutoML search (final models refit on full)."""
+    if n is None or len(X) <= n:
+        return X, np.asarray(y)
+    idx = np.random.default_rng(seed).choice(len(X), n, replace=False)
+    Xs = X.iloc[idx] if hasattr(X, "iloc") else X[idx]
+    return Xs, np.asarray(y)[idx]
+
+
 def optuna_tune(
     X_tr, y_tr, X_val, y_val,
     *,
@@ -127,11 +136,17 @@ def optuna_tune(
     timeout: int | None = None,
     log_trial: Callable[[int, dict, float], None] | None = None,
     seed: int = 42,
+    tune_sample: int | None = 2_000_000,
 ):
-    """Tune a LightGBM model; return (best_params, best_rmse, study)."""
+    """Tune a LightGBM model on a subsample (fast); return (best_params, best_rmse, study).
+
+    The caller refits the chosen params on the FULL training data, so subsampling
+    only speeds the search, not the final model.
+    """
     import optuna
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
+    Xt, yt = _subsample(X_tr, y_tr, tune_sample, seed)
 
     def objective_fn(trial: "optuna.Trial") -> float:
         params = dict(
@@ -145,7 +160,7 @@ def optuna_tune(
             reg_alpha=trial.suggest_float("reg_alpha", 1e-3, 10.0, log=True),
         )
         model = _lgbm(objective, **params)
-        model.fit(X_tr, y_tr)
+        model.fit(Xt, yt)
         rmse = metrics(y_val, model.predict(X_val))["rmse"]
         if log_trial:
             log_trial(trial.number, params, rmse)
@@ -163,23 +178,35 @@ def optuna_tune(
 # --------------------------------------------------------------------------- #
 # FLAML AutoML
 # --------------------------------------------------------------------------- #
-def flaml_automl(X_tr, y_tr, X_val, y_val, *, time_budget: int = 120, seed: int = 42):
+def flaml_automl(X_tr, y_tr, X_val, y_val, *, time_budget: int = 120, seed: int = 42,
+                 search_sample: int | None = 800_000):
     """Run FLAML AutoML; return (model, best_estimator_name, val_metrics).
 
-    Returns FLAML's underlying *fitted* estimator (a raw LightGBM/XGBoost/sklearn
-    model) rather than the AutoML wrapper, so it serves cleanly and SHAP's fast
-    TreeExplainer works downstream.
+    FLAML *searches* estimators/hyperparameters on a subsample (so it can try
+    several models within the time budget even on tens of millions of rows), then
+    we **refit the winning estimator on the full training data** via sklearn clone.
+    Returns the raw fitted estimator (not the AutoML wrapper) so it serves cleanly
+    and SHAP's fast TreeExplainer works.
     """
     from flaml import AutoML
+    from sklearn.base import clone
 
+    Xs, ys = _subsample(X_tr, y_tr, search_sample, seed)
     automl = AutoML()
     automl.fit(
-        X_train=X_tr, y_train=np.asarray(y_tr),
+        X_train=Xs, y_train=ys,
         X_val=X_val, y_val=np.asarray(y_val),
         task="regression", metric="rmse",
-        estimator_list=["lgbm", "xgboost", "rf", "extra_tree"],
+        estimator_list=["lgbm", "xgboost"],  # GBMs refit cheaply on full data
         time_budget=time_budget, seed=seed, verbose=0,
     )
-    model = getattr(getattr(automl, "model", None), "estimator", None) or automl
+    est = getattr(getattr(automl, "model", None), "estimator", None)
+    if est is None:
+        raise RuntimeError("FLAML returned no fitted estimator within the budget")
+    try:                                  # refit winning config on the full data
+        model = clone(est)
+        model.fit(X_tr, y_tr)
+    except Exception:
+        model = est                       # fall back to the subsample-fit model
     val_m = metrics(y_val, model.predict(X_val))
     return model, str(automl.best_estimator), val_m
