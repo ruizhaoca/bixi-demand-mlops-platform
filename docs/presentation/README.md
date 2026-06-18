@@ -12,5 +12,6 @@ Captured from the live MLflow 2.x UI and the pipeline's S3 artifacts (run `cloud
 | `drift_feature_departure_oct.png` | Evidently feature-drift dashboard (Oct-2025 vs 2024) |
 | `drift_concept_departure_oct.png` | Evidently regression-quality (concept) dashboard |
 | `shap_beeswarm_departure.png` / `shap_beeswarm_arrival.png` | SHAP global feature importance |
+| `ec2_streamlit_container_running.png` | EC2 Docker container running the Streamlit app on port 8501 |
 
 Full set of SHAP/LIME/drift artifacts + metrics: see the S3 layout in the root `README.md`.
