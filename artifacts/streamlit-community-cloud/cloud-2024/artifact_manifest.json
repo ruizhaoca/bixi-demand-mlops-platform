@@ -1,0 +1,227 @@
+{
+  "deployment_option": "streamlit-community-cloud-packaged-local-artifacts",
+  "run_id": "cloud-2024",
+  "note": "Presentation images are intentionally reused from docs/presentation and not duplicated here.",
+  "artifacts": [
+    {
+      "status": "downloaded",
+      "bucket": "bixistorage-pipelinebucketb967bd35-icnkid23rfsa",
+      "key": "bixi-mlops/runs/cloud-2024/departure/train/best_model.pkl",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\departure\\train\\best_model.pkl",
+      "required": true,
+      "source": "pipeline-model",
+      "bytes": 1290787,
+      "last_modified": "2026-06-17T19:27:16+00:00",
+      "etag": "2918238dbb534466ebe4696ad2295673"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "bixistorage-pipelinebucketb967bd35-icnkid23rfsa",
+      "key": "bixi-mlops/runs/cloud-2024/departure/data/encoder.pkl",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\departure\\data\\encoder.pkl",
+      "required": true,
+      "source": "pipeline-encoder",
+      "bytes": 59230,
+      "last_modified": "2026-06-17T15:49:55+00:00",
+      "etag": "99bd97c38fd3aa2ec52a0c579d299e3c"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "insy684",
+      "key": "bixi-serving-artifacts/cloud-2024/departure/serving_baselines.parquet",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\departure\\data\\serving_baselines.parquet",
+      "required": true,
+      "source": "serving-baseline",
+      "bytes": 3305725,
+      "last_modified": "2026-06-18T17:35:27+00:00",
+      "etag": "c159092406d819db573e0edff132ad82"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "bixistorage-pipelinebucketb967bd35-icnkid23rfsa",
+      "key": "bixi-mlops/runs/cloud-2024/departure/train/metrics.json",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\departure\\metadata\\metrics.json",
+      "required": true,
+      "source": "pipeline-metadata",
+      "bytes": 1883,
+      "last_modified": "2026-06-17T19:27:16+00:00",
+      "etag": "37dd50c96d6626b2ec5c2f4b72852653"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "bixistorage-pipelinebucketb967bd35-icnkid23rfsa",
+      "key": "bixi-mlops/runs/cloud-2024/departure/data/data_summary.json",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\departure\\metadata\\data_summary.json",
+      "required": true,
+      "source": "pipeline-metadata",
+      "bytes": 555,
+      "last_modified": "2026-06-17T15:49:55+00:00",
+      "etag": "4b2c1e8dcece7d156232c838b47a9849"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "bixistorage-pipelinebucketb967bd35-icnkid23rfsa",
+      "key": "bixi-mlops/runs/cloud-2024/departure/data/tiers.json",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\departure\\metadata\\tiers.json",
+      "required": false,
+      "source": "pipeline-metadata",
+      "bytes": 65064,
+      "last_modified": "2026-06-17T15:49:55+00:00",
+      "etag": "03ef54d0ea24b60c94e6a1e2ce4a3e56"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "bixistorage-pipelinebucketb967bd35-icnkid23rfsa",
+      "key": "bixi-mlops/runs/cloud-2024/departure/fairness/fairness_report.json",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\departure\\monitoring\\fairness_report.json",
+      "required": false,
+      "source": "pipeline-monitoring",
+      "bytes": 5439,
+      "last_modified": "2026-06-17T19:27:29+00:00",
+      "etag": "71171bb390d3c1a791e6471bc95ea05e"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "bixistorage-pipelinebucketb967bd35-icnkid23rfsa",
+      "key": "bixi-mlops/runs/cloud-2024/departure/drift/drift_summary.json",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\departure\\monitoring\\drift_summary.json",
+      "required": false,
+      "source": "pipeline-monitoring",
+      "bytes": 6584,
+      "last_modified": "2026-06-17T19:28:35+00:00",
+      "etag": "f8a78a12301d257655a6283622f15787"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "bixistorage-pipelinebucketb967bd35-icnkid23rfsa",
+      "key": "bixi-mlops/runs/cloud-2024/departure/register/registered_model.json",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\departure\\metadata\\registered_model.json",
+      "required": false,
+      "source": "pipeline-metadata",
+      "bytes": 128,
+      "last_modified": "2026-06-17T19:28:35+00:00",
+      "etag": "b20ceb040c56d757e6de5676507134c0"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "bixistorage-pipelinebucketb967bd35-icnkid23rfsa",
+      "key": "bixi-mlops/runs/cloud-2024/departure/explain/shap_importance.csv",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\departure\\monitoring\\shap_importance.csv",
+      "required": false,
+      "source": "pipeline-monitoring",
+      "bytes": 603,
+      "last_modified": "2026-06-17T19:27:20+00:00",
+      "etag": "1d170fb6d35d86df7930f84621ff9003"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "bixistorage-pipelinebucketb967bd35-icnkid23rfsa",
+      "key": "bixi-mlops/runs/cloud-2024/arrival/train/best_model.pkl",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\arrival\\train\\best_model.pkl",
+      "required": true,
+      "source": "pipeline-model",
+      "bytes": 1284106,
+      "last_modified": "2026-06-17T20:25:55+00:00",
+      "etag": "371254922f2e85b2f34f31560c45be92"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "bixistorage-pipelinebucketb967bd35-icnkid23rfsa",
+      "key": "bixi-mlops/runs/cloud-2024/arrival/data/encoder.pkl",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\arrival\\data\\encoder.pkl",
+      "required": true,
+      "source": "pipeline-encoder",
+      "bytes": 59358,
+      "last_modified": "2026-06-17T19:29:01+00:00",
+      "etag": "326e58b9efd57553da35924a7909bd1b"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "insy684",
+      "key": "bixi-serving-artifacts/cloud-2024/arrival/serving_baselines.parquet",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\arrival\\data\\serving_baselines.parquet",
+      "required": true,
+      "source": "serving-baseline",
+      "bytes": 3378401,
+      "last_modified": "2026-06-18T17:36:05+00:00",
+      "etag": "85ae463085c7e53517d480be1471d2ca"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "bixistorage-pipelinebucketb967bd35-icnkid23rfsa",
+      "key": "bixi-mlops/runs/cloud-2024/arrival/train/metrics.json",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\arrival\\metadata\\metrics.json",
+      "required": true,
+      "source": "pipeline-metadata",
+      "bytes": 1889,
+      "last_modified": "2026-06-17T20:25:55+00:00",
+      "etag": "970b293a194395371de88da6658e0fbb"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "bixistorage-pipelinebucketb967bd35-icnkid23rfsa",
+      "key": "bixi-mlops/runs/cloud-2024/arrival/data/data_summary.json",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\arrival\\metadata\\data_summary.json",
+      "required": true,
+      "source": "pipeline-metadata",
+      "bytes": 552,
+      "last_modified": "2026-06-17T19:29:01+00:00",
+      "etag": "e26ce3ae32f10248a383bf614e25c042"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "bixistorage-pipelinebucketb967bd35-icnkid23rfsa",
+      "key": "bixi-mlops/runs/cloud-2024/arrival/data/tiers.json",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\arrival\\metadata\\tiers.json",
+      "required": false,
+      "source": "pipeline-metadata",
+      "bytes": 65171,
+      "last_modified": "2026-06-17T19:29:01+00:00",
+      "etag": "687d2e95d392393fae95601e92e42a87"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "bixistorage-pipelinebucketb967bd35-icnkid23rfsa",
+      "key": "bixi-mlops/runs/cloud-2024/arrival/fairness/fairness_report.json",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\arrival\\monitoring\\fairness_report.json",
+      "required": false,
+      "source": "pipeline-monitoring",
+      "bytes": 5422,
+      "last_modified": "2026-06-17T20:26:09+00:00",
+      "etag": "e9a30685a6ac1b7749339c6191bb6f24"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "bixistorage-pipelinebucketb967bd35-icnkid23rfsa",
+      "key": "bixi-mlops/runs/cloud-2024/arrival/drift/drift_summary.json",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\arrival\\monitoring\\drift_summary.json",
+      "required": false,
+      "source": "pipeline-monitoring",
+      "bytes": 6688,
+      "last_modified": "2026-06-17T20:27:18+00:00",
+      "etag": "cccd9af2d9e1f3c4a276bd516380a88b"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "bixistorage-pipelinebucketb967bd35-icnkid23rfsa",
+      "key": "bixi-mlops/runs/cloud-2024/arrival/register/registered_model.json",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\arrival\\metadata\\registered_model.json",
+      "required": false,
+      "source": "pipeline-metadata",
+      "bytes": 126,
+      "last_modified": "2026-06-17T20:27:18+00:00",
+      "etag": "4a69d17215fba332f4d855922be61548"
+    },
+    {
+      "status": "downloaded",
+      "bucket": "bixistorage-pipelinebucketb967bd35-icnkid23rfsa",
+      "key": "bixi-mlops/runs/cloud-2024/arrival/explain/shap_importance.csv",
+      "local_path": "artifacts\\streamlit-community-cloud\\cloud-2024\\arrival\\monitoring\\shap_importance.csv",
+      "required": false,
+      "source": "pipeline-monitoring",
+      "bytes": 605,
+      "last_modified": "2026-06-17T20:26:00+00:00",
+      "etag": "8f3ee584b5016247e029c5570046f8bc"
+    }
+  ]
+}

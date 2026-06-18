@@ -1,0 +1,29 @@
+{
+  "target": "departure",
+  "n_features": 17,
+  "features": [
+    "latitude",
+    "longitude",
+    "dayofweek",
+    "month",
+    "slot_sin",
+    "slot_cos",
+    "hist_avg_demand",
+    "baseline_prev_15min",
+    "baseline_prev_1h",
+    "baseline_yesterday_same_slot",
+    "temperature_2m",
+    "precipitation",
+    "wind_speed_10m",
+    "relative_humidity_2m",
+    "weather_code",
+    "station_freq",
+    "station_target_enc"
+  ],
+  "rows": {
+    "train": 39645964,
+    "val": 2976000,
+    "test": 3157536
+  },
+  "target_mean_train": 0.33479490876197815
+}

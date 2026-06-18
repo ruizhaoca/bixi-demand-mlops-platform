@@ -1,0 +1,222 @@
+{
+  "2025_may": {
+    "period": "2025_may",
+    "caveat": "2024 is the baseline for all years; 2025/2026 historical-baseline features are derived from matching 2024 periods, which limits engineered-feature drift. No live weekly cron \u2014 analysis under data constraints, with human review.",
+    "reports": {
+      "feature_drift_html": "/tmp/tmpaa3eatcl/feature_drift_2025_may.html",
+      "target_drift_html": "/tmp/tmpaa3eatcl/target_drift_2025_may.html",
+      "prediction_drift_html": "/tmp/tmpaa3eatcl/prediction_drift_2025_may.html",
+      "concept_regression_html": "/tmp/tmpaa3eatcl/concept_regression_2025_may.html"
+    },
+    "feature_drift": {
+      "n_features": 15,
+      "n_drifted": 13,
+      "share_drifted": 0.8666666666666667,
+      "per_feature": {
+        "latitude": {
+          "ks_stat": 0.032200000000000006,
+          "p_value": 5.915879608162832e-23,
+          "drift": true
+        },
+        "longitude": {
+          "ks_stat": 0.05762000000000002,
+          "p_value": 1.372158321090086e-72,
+          "drift": true
+        },
+        "dayofweek": {
+          "ks_stat": 0.041080000000000005,
+          "p_value": 4.272304241403573e-37,
+          "drift": true
+        },
+        "month": {
+          "ks_stat": 0.58304,
+          "p_value": 0.0,
+          "drift": true
+        },
+        "slot_sin": {
+          "ks_stat": 0.007719999999999949,
+          "p_value": 0.10105791112047136,
+          "drift": false
+        },
+        "slot_cos": {
+          "ks_stat": 0.0048799999999999955,
+          "p_value": 0.5892150994807934,
+          "drift": false
+        },
+        "hist_avg_demand": {
+          "ks_stat": 0.17320000000000002,
+          "p_value": 0.0,
+          "drift": true
+        },
+        "baseline_prev_15min": {
+          "ks_stat": 0.17381999999999997,
+          "p_value": 0.0,
+          "drift": true
+        },
+        "baseline_prev_1h": {
+          "ks_stat": 0.17292000000000007,
+          "p_value": 0.0,
+          "drift": true
+        },
+        "baseline_yesterday_same_slot": {
+          "ks_stat": 0.17375999999999991,
+          "p_value": 0.0,
+          "drift": true
+        },
+        "temperature_2m": {
+          "ks_stat": 0.38952000000000003,
+          "p_value": 0.0,
+          "drift": true
+        },
+        "precipitation": {
+          "ks_stat": 0.01417999999999997,
+          "p_value": 8.521895980183721e-05,
+          "drift": true
+        },
+        "wind_speed_10m": {
+          "ks_stat": 0.06733999999999996,
+          "p_value": 5.172304815629681e-99,
+          "drift": true
+        },
+        "relative_humidity_2m": {
+          "ks_stat": 0.07528,
+          "p_value": 1.1635995185111126e-123,
+          "drift": true
+        },
+        "weather_code": {
+          "ks_stat": 0.14494,
+          "p_value": 0.0,
+          "drift": true
+        }
+      }
+    },
+    "target_drift": {
+      "ks_stat": 0.11531999999999998,
+      "p_value": 4.294458518906618e-290,
+      "drift": true
+    },
+    "prediction_drift": {
+      "ks_stat": 0.29804,
+      "p_value": 0.0,
+      "drift": true
+    },
+    "concept_drift": {
+      "current_r2": 0.33926410426744114,
+      "current_rmse": 0.9755135914902027,
+      "r2_alert_threshold": 0.55,
+      "concept_drift_alert": true,
+      "reference_r2": 0.33926410426744114,
+      "r2_drop": 0.0
+    }
+  },
+  "2025_oct": {
+    "period": "2025_oct",
+    "caveat": "2024 is the baseline for all years; 2025/2026 historical-baseline features are derived from matching 2024 periods, which limits engineered-feature drift. No live weekly cron \u2014 analysis under data constraints, with human review.",
+    "reports": {
+      "feature_drift_html": "/tmp/tmpaa3eatcl/feature_drift_2025_oct.html",
+      "target_drift_html": "/tmp/tmpaa3eatcl/target_drift_2025_oct.html",
+      "prediction_drift_html": "/tmp/tmpaa3eatcl/prediction_drift_2025_oct.html",
+      "concept_regression_html": "/tmp/tmpaa3eatcl/concept_regression_2025_oct.html"
+    },
+    "feature_drift": {
+      "n_features": 15,
+      "n_drifted": 13,
+      "share_drifted": 0.8666666666666667,
+      "per_feature": {
+        "latitude": {
+          "ks_stat": 0.029140000000000055,
+          "p_value": 7.086662249622208e-19,
+          "drift": true
+        },
+        "longitude": {
+          "ks_stat": 0.06029999999999999,
+          "p_value": 1.8350191603306485e-79,
+          "drift": true
+        },
+        "dayofweek": {
+          "ks_stat": 0.029439999999999966,
+          "p_value": 2.941697616111458e-19,
+          "drift": true
+        },
+        "month": {
+          "ks_stat": 0.74862,
+          "p_value": 0.0,
+          "drift": true
+        },
+        "slot_sin": {
+          "ks_stat": 0.009680000000000022,
+          "p_value": 0.018343458932358052,
+          "drift": true
+        },
+        "slot_cos": {
+          "ks_stat": 0.007000000000000006,
+          "p_value": 0.1716739738666162,
+          "drift": false
+        },
+        "hist_avg_demand": {
+          "ks_stat": 0.25264,
+          "p_value": 0.0,
+          "drift": true
+        },
+        "baseline_prev_15min": {
+          "ks_stat": 0.25271999999999994,
+          "p_value": 0.0,
+          "drift": true
+        },
+        "baseline_prev_1h": {
+          "ks_stat": 0.25254000000000004,
+          "p_value": 0.0,
+          "drift": true
+        },
+        "baseline_yesterday_same_slot": {
+          "ks_stat": 0.25117999999999996,
+          "p_value": 0.0,
+          "drift": true
+        },
+        "temperature_2m": {
+          "ks_stat": 0.2983,
+          "p_value": 0.0,
+          "drift": true
+        },
+        "precipitation": {
+          "ks_stat": 0.007399999999999962,
+          "p_value": 0.12872692439453393,
+          "drift": false
+        },
+        "wind_speed_10m": {
+          "ks_stat": 0.10512000000000005,
+          "p_value": 5.3401046360986254e-241,
+          "drift": true
+        },
+        "relative_humidity_2m": {
+          "ks_stat": 0.07263999999999998,
+          "p_value": 3.689774694271894e-115,
+          "drift": true
+        },
+        "weather_code": {
+          "ks_stat": 0.19867999999999997,
+          "p_value": 0.0,
+          "drift": true
+        }
+      }
+    },
+    "target_drift": {
+      "ks_stat": 0.11436000000000002,
+      "p_value": 2.8148252663419325e-285,
+      "drift": true
+    },
+    "prediction_drift": {
+      "ks_stat": 0.36077999999999993,
+      "p_value": 0.0,
+      "drift": true
+    },
+    "concept_drift": {
+      "current_r2": 0.33898315734006224,
+      "current_rmse": 1.0255100696174302,
+      "r2_alert_threshold": 0.55,
+      "concept_drift_alert": true,
+      "reference_r2": 0.33926410426744114,
+      "r2_drop": 0.00028094692737890004
+    }
+  }
+}
