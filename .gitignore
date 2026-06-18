@@ -26,6 +26,8 @@ data/external/
 *.tsv
 *.parquet
 *.zip
+!artifacts/streamlit-community-cloud/**/*.csv
+!artifacts/streamlit-community-cloud/**/*.parquet
 !data/.gitkeep
 !data/README.md
 

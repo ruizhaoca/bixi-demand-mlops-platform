@@ -1,0 +1,29 @@
+{
+  "target": "arrival",
+  "n_features": 17,
+  "features": [
+    "latitude",
+    "longitude",
+    "dayofweek",
+    "month",
+    "slot_sin",
+    "slot_cos",
+    "hist_avg_demand",
+    "baseline_prev_15min",
+    "baseline_prev_1h",
+    "baseline_yesterday_same_slot",
+    "temperature_2m",
+    "precipitation",
+    "wind_speed_10m",
+    "relative_humidity_2m",
+    "weather_code",
+    "station_freq",
+    "station_target_enc"
+  ],
+  "rows": {
+    "train": 39786428,
+    "val": 2984928,
+    "test": 3166464
+  },
+  "target_mean_train": 0.3318216800689697
+}
