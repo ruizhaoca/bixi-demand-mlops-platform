@@ -13,7 +13,6 @@ import pickle
 import tempfile
 from typing import Any
 
-import boto3
 import pandas as pd
 
 from . import config
@@ -22,12 +21,19 @@ from . import config
 # --------------------------------------------------------------------------- #
 # boto3
 # --------------------------------------------------------------------------- #
+# ``boto3`` is imported lazily (inside ``s3()``) so the Community Cloud serving
+# app — which only reads the committed local artifacts and never touches S3 —
+# does not load boto3/botocore at import time. This keeps the local serving
+# import chain dependent only on numpy/pandas and avoids a whole class of
+# import-time failures on Streamlit Community Cloud.
 _CLIENT = None
 
 
 def s3():
     global _CLIENT
     if _CLIENT is None:
+        import boto3
+
         _CLIENT = boto3.client("s3", region_name=config.AWS_REGION)
     return _CLIENT
 
