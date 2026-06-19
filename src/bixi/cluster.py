@@ -152,6 +152,23 @@ def _internal_scores(X: np.ndarray, labels: np.ndarray) -> dict | None:
     }
 
 
+def _is_degenerate(labels: np.ndarray, n: int, max_dominant: float = 0.85,
+                   max_noise: float = 0.10, min_share: float = 0.01) -> bool:
+    """Reject operationally useless solutions: one dominant blob, too much DBSCAN
+    noise, or tiny singleton clusters. Such solutions can score a high silhouette
+    while telling no useful operational story."""
+    labels = np.asarray(labels)
+    if n == 0:
+        return True
+    noise_frac = float(np.mean(labels == -1))
+    sizes = np.array([np.sum(labels == c) for c in np.unique(labels) if c != -1], dtype=float)
+    if sizes.size < 2:
+        return True
+    return (noise_frac > max_noise
+            or sizes.max() / n > max_dominant
+            or sizes.min() < max(5, min_share * n))
+
+
 def _centroids(X: np.ndarray, labels: np.ndarray) -> tuple[np.ndarray, list]:
     ids = sorted(int(c) for c in np.unique(labels) if c != -1)
     cents = np.vstack([X[labels == c].mean(axis=0) for c in ids])
@@ -195,7 +212,8 @@ def compare_and_select(profiles: pd.DataFrame, feature_cols: list[str] | None = 
         if scores is None:
             continue
         n_clusters = len(set(int(c) for c in labels if c != -1))
-        rec = {"algorithm": algorithm, "k": k, "eps": eps, "n_clusters": n_clusters, **scores}
+        rec = {"algorithm": algorithm, "k": k, "eps": eps, "n_clusters": n_clusters,
+               "eligible": not _is_degenerate(np.asarray(labels), len(X)), **scores}
         idx = len(candidates)
         candidates.append(rec)
         fitted[idx] = (est, np.asarray(labels))
@@ -203,7 +221,13 @@ def compare_and_select(profiles: pd.DataFrame, feature_cols: list[str] | None = 
     if not candidates:
         raise RuntimeError("No clustering candidate produced >=2 scorable clusters.")
 
-    best_idx = max(range(len(candidates)), key=lambda i: (
+    # Select the best silhouette among non-degenerate candidates; only if none are
+    # balanced do we fall back to the raw best (keeps the run from ever failing).
+    pool = [i for i, c in enumerate(candidates) if c["eligible"]]
+    if not pool:
+        log("[cluster] no balanced candidate; falling back to best raw silhouette.")
+        pool = list(range(len(candidates)))
+    best_idx = max(pool, key=lambda i: (
         candidates[i]["silhouette"], candidates[i]["calinski_harabasz"],
         -candidates[i]["davies_bouldin"]))
     best, (best_est, best_labels) = candidates[best_idx], fitted[best_idx]
@@ -269,6 +293,13 @@ def label_clusters(profiles: pd.DataFrame, cm: ClusterModel,
     out["demand_level"] = out["cluster"].map(level_map)
     out["rebalancing_flag"] = out["cluster"].map({c: _flag(c) for c in order})
     out["cluster_label"] = out["demand_level"].str.capitalize() + " demand · " + out["rebalancing_flag"]
+
+    # DBSCAN noise (-1), if ever selected, is an outlier set, not a demand tier.
+    if (out["cluster"] == -1).any():
+        noise = out["cluster"] == -1
+        out.loc[noise, "demand_level"] = "outlier"
+        out.loc[noise, "rebalancing_flag"] = "n/a"
+        out.loc[noise, "cluster_label"] = "Outlier"
 
     cols = (["station_name", "latitude", "longitude", "cluster", "cluster_label",
              "demand_level", "rebalancing_flag", "dep_intensity", "arr_intensity"]

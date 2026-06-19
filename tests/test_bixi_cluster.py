@@ -82,6 +82,18 @@ def test_label_clusters_contract(profiles_2024):
         assert col in labels.columns
 
 
+def test_degenerate_guard_rejects_blob_and_noise():
+    n = 200
+    balanced = np.array([0] * 70 + [1] * 70 + [2] * 60)
+    assert not cluster._is_degenerate(balanced, n)
+    blob = np.array([0] * 190 + [1] * 10)            # one dominant cluster
+    assert cluster._is_degenerate(blob, n)
+    noisy = np.array([-1] * 40 + [0] * 100 + [1] * 60)  # 20% DBSCAN noise
+    assert cluster._is_degenerate(noisy, n)
+    singleton = np.array([0] * 197 + [1] * 2 + [2] * 1)  # tiny clusters
+    assert cluster._is_degenerate(singleton, n)
+
+
 def test_cluster_drift_keys_and_ranges(profiles_2024):
     cm = cluster.compare_and_select(profiles_2024)
     profiles_2025 = cluster.build_station_profiles({
