@@ -20,6 +20,9 @@ four-type drift monitoring, containerization, CI/CD, and AWS infrastructure-as-c
   operational rebalancing.
 - **Departures and arrivals predicted separately** through one shared pipeline run
   twice, surfacing rebalancing pressure (high-departure / low-arrival stations).
+- **Net-flow rebalancing layer** that combines both forecasts into an operational
+  priority list — which stations will run **empty (need bikes)** or **overflow
+  (need docks)** over a representative weekday, ranked by severity.
 - **All stations**, not just the busiest few.
 - **Leakage-safe features**: temporal (cyclical 15-min slot, day-of-week, month),
   historical 2024 profile baselines built **leave-one-out** on the training rows,
@@ -98,6 +101,7 @@ at `data`** because the cleaned data and feature tables already live in S3.
 │   ├── drift.py                    # Evidently 4-type drift reports
 │   ├── registry.py                 # MLflow tracking + registry promotion
 │   ├── inference.py                # load production model + predict contract
+│   ├── rebalancing.py              # net-flow rebalancing priorities (dep+arr -> ranking)
 │   ├── streamlit_local_serving.py  # local/packaged-artifact serving helpers
 │   └── streamlit_s3_serving.py     # S3-backed serving helpers (EC2)
 ├── app.py                          # Streamlit app (Community Cloud, packaged artifacts)
@@ -206,10 +210,40 @@ baselines and the cyclical time-of-day features, with weather as a secondary dri
 
 ---
 
+## Rebalancing priorities
+
+The departure and arrival forecasts are only operationally useful **together**. The
+net-flow layer (`src/bixi/rebalancing.py`) combines them into a rebalancing plan: for
+a representative weekday it computes `net_flow = arrival_pred − departure_pred` per
+station per 15-minute slot, cumulates it across the day to a relative occupancy
+trajectory, and reads each station's **peak deficit** (bikes needed / stockout risk)
+and **peak surplus** (docks needed / overflow risk). Stations are ranked by severity
+and tagged **needs bikes** or **needs docks** — a daily priority list for where a
+rebalancing truck adds the most value. It is scored under a neutral weather vector
+because net flow is robust to weather level (rain depresses departures and arrivals
+together). No AWS is required — it runs off the committed serving artifacts.
+
+```bash
+PYTHONPATH=src python -m bixi.rebalancing            # print the top-20 priorities (Tuesday)
+PYTHONPATH=src python -m bixi.rebalancing --dayofweek 4 --top 30 --write-csv
+```
+
+The Streamlit **Rebalancing Priorities** page renders this as a pressure map (colored
+by need, sized by risk), a ranked table, and a per-station occupancy trajectory.
+
+**Limitation:** the trip data has no dock capacity or real-time occupancy, so the
+trajectory starts from a common zero reference. This is a **relative** risk ranking
+and priority order — not exact stockout clock-times or absolute fill levels. Design
+details: [`docs/phase3_rebalancing.md`](docs/phase3_rebalancing.md).
+
+---
+
 ## Streamlit apps
 
 Both apps share one UI and offer: a multi-day demand forecast (Open-Meteo weather),
-custom-input single predictions, and a model-monitoring page (SHAP, fairness, drift).
+a **rebalancing-priorities** page (net-flow map, ranked priority list, per-station
+occupancy trajectory), custom-input single predictions, and a model-monitoring page
+(SHAP, fairness, drift).
 
 - **`app.py`** — Streamlit Community Cloud. Loads model artifacts committed under
   `artifacts/streamlit-community-cloud/cloud-2024/`; needs no AWS at runtime.
@@ -253,6 +287,7 @@ Team guide: [`docs/github_actions_guide.md`](docs/github_actions_guide.md).
 ## Documentation
 
 - Phase-2 modeling design & decisions: [`docs/phase2_modeling.md`](docs/phase2_modeling.md)
+- Phase-3 net-flow rebalancing layer: [`docs/phase3_rebalancing.md`](docs/phase3_rebalancing.md)
 - EC2 Streamlit deployment: [`docs/ec2_streamlit_deployment_guide.md`](docs/ec2_streamlit_deployment_guide.md)
 - Model / S3 / EC2 operations: [`docs/model_s3_ec2_operations_guide.md`](docs/model_s3_ec2_operations_guide.md)
 - GitHub Actions / CI: [`docs/github_actions_guide.md`](docs/github_actions_guide.md)

@@ -44,6 +44,7 @@ def render_ec2_sidebar(bundles) -> str:
         "Page",
         [
             "7-Day Demand Prediction",
+            "Rebalancing Priorities",
             "Demand Prediction with Custom Inputs",
             "Predictive Model Monitoring",
         ],

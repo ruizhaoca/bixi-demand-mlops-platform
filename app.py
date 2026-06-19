@@ -20,6 +20,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
 import requests
 import streamlit as st
@@ -27,6 +28,11 @@ import streamlit as st
 REPO_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from bixi.rebalancing import (  # noqa: E402
+    NEEDS_BIKES,
+    NEEDS_DOCKS,
+    compute_rebalancing,
+)
 from bixi.streamlit_local_serving import (  # noqa: E402
     DEFAULT_ARTIFACT_ROOT,
     TARGET_LABELS,
@@ -80,6 +86,20 @@ WEATHER_CODE_DESCRIPTIONS = {
 WEATHER_CODE_OPTIONS = list(WEATHER_CODE_DESCRIPTIONS)
 SLOTS_PER_DAY = 96
 PRESENTATION_DIR = REPO_ROOT / "docs" / "presentation"
+
+# Representative-weekday choices for the rebalancing page (pandas dayofweek 0=Mon).
+WEEKDAYS = {
+    "Monday": 0,
+    "Tuesday": 1,
+    "Wednesday": 2,
+    "Thursday": 3,
+    "Friday": 4,
+}
+REBALANCING_COLORS = {
+    "Needs bikes": "#b91c1c",
+    "Needs docks": "#1d4ed8",
+    "Low risk": "#9ca3af",
+}
 
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
@@ -675,6 +695,159 @@ def render_monitoring(bundles) -> None:
         render_drift(bundles)
 
 
+@st.cache_resource(show_spinner="Scoring rebalancing priorities...")
+def cached_rebalancing(_bundles, dayofweek: int):
+    """Compute (netflow_df, ranked risk_df) for one weekday. ``_bundles`` is not hashed."""
+    return compute_rebalancing(_bundles, dayofweek=dayofweek)
+
+
+def rebalancing_map_category(risk_df: pd.DataFrame) -> pd.Series:
+    """Map each station to a display color bucket: needs bikes / needs docks / low risk.
+
+    The calmer half (risk_score below the median) is greyed out as "Low risk" so the
+    higher-pressure stations that actually need a truck visit stand out on the map.
+    """
+    cutoff = risk_df["risk_score"].median()
+    needs = np.where(risk_df["direction"] == NEEDS_BIKES, "Needs bikes", "Needs docks")
+    return pd.Series(np.where(risk_df["risk_score"] <= cutoff, "Low risk", needs), index=risk_df.index)
+
+
+def rebalancing_map_figure(risk_df: pd.DataFrame):
+    df = risk_df.copy()
+    df["deficit_time"] = df["deficit_slot"].map(slot_label)
+    df["surplus_time"] = df["surplus_slot"].map(slot_label)
+    df["map_category"] = rebalancing_map_category(df)
+    fig = px.scatter_mapbox(
+        df,
+        lat="latitude",
+        lon="longitude",
+        color="map_category",
+        size="risk_score",
+        color_discrete_map=REBALANCING_COLORS,
+        category_orders={"map_category": ["Needs bikes", "Needs docks", "Low risk"]},
+        hover_name="station_name",
+        hover_data={
+            "priority": True,
+            "direction": True,
+            "risk_score": ":.1f",
+            "peak_deficit": ":.1f",
+            "deficit_time": True,
+            "peak_surplus": ":.1f",
+            "surplus_time": True,
+            "throughput": ":.0f",
+            "latitude": False,
+            "longitude": False,
+            "map_category": False,
+        },
+        size_max=22,
+        zoom=11,
+        height=620,
+    )
+    fig.update_layout(
+        mapbox_style="open-street-map",
+        mapbox_center={"lat": MONTREAL_LAT, "lon": MONTREAL_LON},
+        legend_title_text="Rebalancing need",
+        margin=dict(l=0, r=0, t=0, b=0),
+    )
+    return fig
+
+
+def rebalancing_curve_figure(netflow_df: pd.DataFrame, station_name: str):
+    station = netflow_df[netflow_df["station_name"] == station_name].sort_values("slot_of_day")
+    times = station["slot_of_day"].map(slot_label)
+    cumulative = station["net_flow"].cumsum()
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=times,
+            y=cumulative,
+            mode="lines",
+            fill="tozeroy",
+            name="Cumulative net flow",
+            line=dict(width=2, color="#0f766e"),
+        )
+    )
+    fig.add_hline(y=0, line_dash="dot", line_color="#6b7280")
+    fig.update_layout(
+        title=f"Relative occupancy trajectory for {station_name} (vs. day start)",
+        xaxis_title="Time of day",
+        yaxis_title="Cumulative net flow (arrivals - departures)",
+        hovermode="x unified",
+    )
+    fig.update_xaxes(dtick=8)
+    return fig
+
+
+def rebalancing_priorities_table(risk_df: pd.DataFrame, top_n: int = 25) -> pd.DataFrame:
+    table = risk_df.head(top_n).copy()
+    table["peak deficit (bikes)"] = table["peak_deficit"].round(1)
+    table["deficit time"] = table["deficit_slot"].map(slot_label)
+    table["peak surplus (docks)"] = table["peak_surplus"].round(1)
+    table["surplus time"] = table["surplus_slot"].map(slot_label)
+    table["risk score"] = table["risk_score"].round(1)
+    table["throughput"] = table["throughput"].round(0)
+    return table.rename(columns={"station_name": "station", "direction": "needs"})[
+        [
+            "priority",
+            "station",
+            "needs",
+            "risk score",
+            "peak deficit (bikes)",
+            "deficit time",
+            "peak surplus (docks)",
+            "surplus time",
+            "throughput",
+        ]
+    ]
+
+
+def rebalancing_insight() -> str:
+    return (
+        "Net flow combines both models: 'needs docks' stations (downtown/Old-Port destinations) fill up "
+        "as arrivals outpace departures, while 'needs bikes' stations (residential and park origins) drain "
+        "as commuters leave. The priority list is where a rebalancing truck adds the most value on this day."
+    )
+
+
+def render_rebalancing(bundles) -> None:
+    st.header("Rebalancing Priorities")
+    st.write(
+        "Turn the departure and arrival forecasts into an operational rebalancing plan. For a representative "
+        "weekday, net flow (arrivals - departures) is cumulated across the day to flag which stations are at "
+        "risk of running **empty (need bikes)** or **overflowing (need docks)**, ranked by severity."
+    )
+
+    weekday = st.selectbox("Representative weekday", list(WEEKDAYS), index=1)
+    netflow_df, risk_df = cached_rebalancing(bundles, WEEKDAYS[weekday])
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Stations scored", len(risk_df))
+    c2.metric("Need bikes (stockout risk)", int((risk_df["direction"] == NEEDS_BIKES).sum()))
+    c3.metric("Need docks (overflow risk)", int((risk_df["direction"] == NEEDS_DOCKS).sum()))
+
+    st.subheader("Rebalancing pressure map")
+    st.caption("Colored by rebalancing need, sized by risk score. The calmer half is shown as low risk.")
+    st.plotly_chart(rebalancing_map_figure(risk_df), width="stretch")
+
+    st.subheader("Top priority stations")
+    st.dataframe(rebalancing_priorities_table(risk_df, 25), width="stretch", hide_index=True)
+
+    st.subheader("Station occupancy trajectory")
+    station_name = st.selectbox(
+        "Station (defaults to the top priority)",
+        risk_df["station_name"].tolist(),
+        index=0,
+    )
+    st.plotly_chart(rebalancing_curve_figure(netflow_df, station_name), width="stretch")
+
+    render_insight(rebalancing_insight())
+    st.caption(
+        "Limitation: the trip data has no dock-capacity or real-time occupancy, so trajectories start from a "
+        "common zero reference. This is a relative risk ranking and priority order, not exact stockout "
+        "clock-times or absolute fill levels."
+    )
+
+
 def render_sidebar(bundles) -> str:
     st.sidebar.title("BIXI Demand")
     st.sidebar.caption("Mode: Streamlit Community Cloud packaged local artifacts")
@@ -685,6 +858,7 @@ def render_sidebar(bundles) -> str:
         "Page",
         [
             "7-Day Demand Prediction",
+            "Rebalancing Priorities",
             "Demand Prediction with Custom Inputs",
             "Predictive Model Monitoring",
         ],
@@ -698,6 +872,8 @@ def main() -> None:
 
     if page == "7-Day Demand Prediction":
         render_page_7_day_prediction(bundles)
+    elif page == "Rebalancing Priorities":
+        render_rebalancing(bundles)
     elif page == "Demand Prediction with Custom Inputs":
         render_custom_inputs(bundles)
     else:
