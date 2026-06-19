@@ -110,7 +110,7 @@ def station_risk(netflow_df: pd.DataFrame) -> pd.DataFrame:
     """
     ordered = netflow_df.sort_values([config.STATION_COL, "slot_of_day"])
     records = []
-    for station, group in ordered.groupby(config.STATION_COL, sort=False):
+    for station, group in ordered.groupby(config.STATION_COL, sort=False, observed=True):
         net = group["net_flow"].to_numpy(dtype="float64")
         slots = group["slot_of_day"].to_numpy()
         cumulative = np.cumsum(net)

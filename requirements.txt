@@ -1,14 +1,23 @@
-# Streamlit serving dependencies (app.py on Community Cloud, app_ec2.py on EC2).
-# Pinned to a proven, mutually-compatible generation so Streamlit Community Cloud
-# builds are reproducible. Unpinned ">=" previously let the Cloud resolve to
-# bleeding-edge majors (numpy 2.x, pandas 3.x) and fail at import; these upper
-# bounds lock to the stable generation the committed model artifacts load under.
-streamlit>=1.44,<2
-pandas>=2.2,<2.3
-numpy>=1.26,<2
-pyarrow>=15,<18
-requests>=2.31,<3
-plotly>=5.20,<6
-scikit-learn>=1.4,<1.6
-lightgbm>=4.3,<4.6
-boto3>=1.34,<2
+# Streamlit serving dependencies (app.py on Streamlit Community Cloud, app_ec2.py on EC2).
+#
+# IMPORTANT — why these are NOT capped below the latest generation:
+# Streamlit Community Cloud currently provisions **Python 3.14**, which only ships
+# binary wheels for the latest scientific-stack generation (numpy 2.4, pandas 3.0,
+# pyarrow 24, scikit-learn 1.9, ...). A previous revision capped these below that
+# generation (numpy<2, pandas<2.3, pyarrow<18, scikit-learn<1.6). On Python 3.14
+# those older versions have no wheels, so Cloud tried to BUILD them from source and
+# the deploy failed ("Failed to download and build pyarrow==17.0.0" / pandas built
+# from sdist) -> the app showed "Oh no. Error running app."
+#
+# These exact versions are the set Cloud resolves on Python 3.14; they also ship
+# wheels for Python 3.12 (CI + the EC2 Docker image) and are verified end-to-end to
+# load the committed model artifacts and run every page of the app.
+streamlit==1.58.0
+pandas==3.0.3
+numpy==2.4.6
+pyarrow==24.0.0
+requests==2.34.2
+plotly==6.8.0
+scikit-learn==1.9.0
+lightgbm==4.6.0
+boto3==1.43.33

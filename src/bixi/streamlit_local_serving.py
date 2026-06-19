@@ -122,11 +122,32 @@ def _load_shap_importance(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
+def _compact_baselines(baselines: pd.DataFrame) -> pd.DataFrame:
+    """Shrink the serving baselines in memory.
+
+    Streamlit Community Cloud caps each app's RAM, and we load this frame for
+    both targets (departure + arrival) plus a sorted-index copy of each. The
+    dominant cost is ``station_name``: ~750k rows of repeated Python strings for
+    only ~1.1k unique stations. Storing it as a category (integer codes + one
+    shared string table) cuts the frame from ~100 MB to ~25 MB, and the lookup
+    copy shrinks the same way. Lat/lon don't need float64 precision for serving.
+    Downstream code is unaffected: the encoder maps station_name by value and
+    ``.stations`` casts back to str.
+    """
+    if baselines[config.STATION_COL].dtype == object:
+        baselines[config.STATION_COL] = baselines[config.STATION_COL].astype("category")
+    for col in ("latitude", "longitude"):
+        if col in baselines.columns and baselines[col].dtype == "float64":
+            baselines[col] = baselines[col].astype("float32")
+    return baselines
+
+
 def load_target_bundle(artifact_root: str | Path, target: str) -> LocalTargetBundle:
     root = Path(artifact_root) / target
     model = _load_pickle(root / "train" / "best_model.pkl")
     encoder = _load_pickle(root / "data" / "encoder.pkl")
     baselines = pd.read_parquet(root / "data" / "serving_baselines.parquet")
+    baselines = _compact_baselines(baselines)
     baseline_lookup = baselines.set_index([config.STATION_COL, "dayofweek", "slot_of_day"]).sort_index()
     return LocalTargetBundle(
         target=target,
