@@ -33,6 +33,10 @@ four-type drift monitoring, containerization, CI/CD, and AWS infrastructure-as-c
 - **SHAP + LIME** explainability, **fairness** error-parity analysis across demand
   tiers and geography, and **Evidently** drift reports (feature / target /
   prediction / concept).
+- **Operational station clustering** (cross-target): groups stations by their
+  departure/arrival demand shape, auto-selecting among K-Means / GMM / Agglomerative /
+  DBSCAN, and flags **rebalancing risk** (departure-heavy vs arrival-heavy) with a
+  cluster feature-drift analysis.
 - **Containerized** training and serving images, a **GitHub Actions** CI pipeline,
   and **AWS CDK** infrastructure (VPC, S3, MLflow on EC2, AWS Batch training).
 
@@ -93,6 +97,7 @@ at `data`** because the cleaned data and feature tables already live in S3.
 │   ├── data.py                     # range filter, station encoding, demand tiers
 │   ├── models.py                   # candidates, FLAML AutoML, Optuna HPO, metrics
 │   ├── pipeline.py                 # resumable staged runner (python -m bixi.pipeline)
+│   ├── cluster.py                  # cross-target station clustering (python -m bixi.cluster)
 │   ├── explain.py                  # SHAP + LIME artifacts
 │   ├── fairness.py                 # error-parity fairness report
 │   ├── drift.py                    # Evidently 4-type drift reports
@@ -189,6 +194,24 @@ python -m bixi.pipeline --targets departure --run-id smoke \
 
 ---
 
+## Station clustering (cross-target)
+
+A standalone capability that groups stations by their departure + arrival demand
+profile across the day, auto-selects among K-Means / GMM / Agglomerative / DBSCAN
+(silhouette / Davies-Bouldin / Calinski-Harabasz), labels each cluster by demand
+level and **rebalancing risk** (departure-heavy vs arrival-heavy), and runs a cluster
+feature-drift analysis. Outputs `station_clusters.csv` + an MLflow experiment
+(`bixi-station-clusters`); surfaced on the Streamlit **Station Clusters** map page.
+
+```bash
+python -m bixi.cluster --run-id cloud-2024            # against S3 (needs AWS creds)
+python -m bixi.cluster --run-id dev --local-dir ~/bixi_data   # local CSVs
+```
+
+Design & method: [`docs/phase3_clustering.md`](docs/phase3_clustering.md).
+
+---
+
 ## Results (selected model: LightGBM + Optuna, per split)
 
 15-minute slot-level demand is far noisier than hourly aggregates (many zero-demand
@@ -209,7 +232,8 @@ baselines and the cyclical time-of-day features, with weather as a secondary dri
 ## Streamlit apps
 
 Both apps share one UI and offer: a multi-day demand forecast (Open-Meteo weather),
-custom-input single predictions, and a model-monitoring page (SHAP, fairness, drift).
+custom-input single predictions, a **Station Clusters** map page (Plotly), and a
+model-monitoring page (SHAP, fairness, drift).
 
 - **`app.py`** — Streamlit Community Cloud. Loads model artifacts committed under
   `artifacts/streamlit-community-cloud/cloud-2024/`; needs no AWS at runtime.
@@ -253,6 +277,7 @@ Team guide: [`docs/github_actions_guide.md`](docs/github_actions_guide.md).
 ## Documentation
 
 - Phase-2 modeling design & decisions: [`docs/phase2_modeling.md`](docs/phase2_modeling.md)
+- Phase-3 station clustering: [`docs/phase3_clustering.md`](docs/phase3_clustering.md)
 - EC2 Streamlit deployment: [`docs/ec2_streamlit_deployment_guide.md`](docs/ec2_streamlit_deployment_guide.md)
 - Model / S3 / EC2 operations: [`docs/model_s3_ec2_operations_guide.md`](docs/model_s3_ec2_operations_guide.md)
 - GitHub Actions / CI: [`docs/github_actions_guide.md`](docs/github_actions_guide.md)

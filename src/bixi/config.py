@@ -130,6 +130,17 @@ def success_key(run_id: str, target: str, stage: str) -> str:
     return _join(stage_prefix(run_id, target, stage), "_SUCCESS")
 
 
+# Station clustering is cross-target (one model over both departures + arrivals),
+# so its outputs live at a run-level prefix, NOT under a per-target prefix.
+def cluster_prefix(run_id: str) -> str:
+    """S3 key prefix (no bucket) for the cross-target clustering outputs."""
+    return _join(PIPELINE_PREFIX, "runs", run_id, "clustering")
+
+
+# MLflow experiment name for the cross-target station-clustering runs.
+CLUSTER_EXPERIMENT = "bixi-station-clusters"
+
+
 # MLflow experiment + registered model names, per target.
 def experiment_name(target: str) -> str:
     return f"bixi-demand-{target}"
