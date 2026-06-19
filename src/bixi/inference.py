@@ -1,4 +1,4 @@
-"""Inference contract for serving (Phase-4 FastAPI/Streamlit handoff).
+"""Inference contract for serving (Streamlit serving handoff).
 
 Loads the trained model + the fitted station encoder and scores a feature frame.
 Two load paths:
