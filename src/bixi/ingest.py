@@ -86,15 +86,40 @@ def ensure_trips_in_s3(force: bool = False) -> list[str]:
 
 
 def ensure_raw_in_s3(force: bool = False) -> dict:
+    """Materialise every from-scratch input the feature stage needs in S3:
+
+      (a) 15-minute Montreal weather (Open-Meteo),
+      (b) the raw BIXI trip archives (downloaded + extracted), and
+      (c) the cleaned 15-minute departure/arrival demand tables.
+
+    Idempotent at every step — already-present objects are skipped unless
+    ``force``. The cleaning logic lives in :mod:`bixi.demand_ingestion_cleaning`
+    and is imported lazily so the heavy pandas-only path is not loaded by tests
+    that merely import :mod:`bixi.ingest`.
+    """
     have_trips = {p: _prefix_has_objects(p) for p in EXPECTED_TRIPS}
     have_weather = {k: io.exists(k, bucket=config.DATA_BUCKET) for k in EXPECTED_WEATHER}
     print(f"[ingest] trips present: {have_trips}")
     print(f"[ingest] weather present: {have_weather}")
     summary = {"have_trips": have_trips, "have_weather": have_weather}
+
+    # (a) weather
     if not all(have_weather.values()) or force:
         summary["weather_ingested"] = ensure_weather_in_s3(force=force)
-    if not all(have_trips.values()) or force:
+
+    # (b) raw trip archives: prefer the canonical extracted layout used by the
+    # cleaning step; fall back to the BIXI_TRIP_URLS whole-zip upload if set.
+    from . import demand_ingestion_cleaning as dic  # lazy: keep tests import-light
+
+    summary["trips_extracted"] = dic.download_raw_trips(force=force)
+    if os.getenv("BIXI_TRIP_URLS"):
         summary["trips_ingested"] = ensure_trips_in_s3(force=force)
-    if all(have_trips.values()) and all(have_weather.values()) and not force:
+
+    # (c) cleaned 15-minute demand tables (input to the feature stage)
+    summary["demand_tables"] = dic.build_demand_tables(force=force)
+
+    if (all(have_trips.values()) and all(have_weather.values())
+            and not force and not summary.get("trips_extracted")
+            and not summary.get("demand_tables")):
         print("[ingest] all raw inputs already present in S3 — nothing to do.")
     return summary

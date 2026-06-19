@@ -20,6 +20,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
 import requests
 import streamlit as st
@@ -32,6 +33,7 @@ from bixi.streamlit_local_serving import (  # noqa: E402
     TARGET_LABELS,
     common_stations,
     load_local_bundles,
+    load_station_clusters,
     slot_label,
     timestamp_for,
 )
@@ -88,6 +90,12 @@ st.set_page_config(page_title=APP_TITLE, layout="wide")
 @st.cache_resource(show_spinner="Loading packaged model artifacts...")
 def cached_bundles():
     return load_local_bundles(DEFAULT_ARTIFACT_ROOT)
+
+
+@st.cache_resource(show_spinner="Loading station clusters...")
+def cached_clusters():
+    # Cross-target station clustering artifact; None until generated + committed.
+    return load_station_clusters(DEFAULT_ARTIFACT_ROOT)
 
 
 @st.cache_data(ttl=86400, show_spinner="Fetching 15-minute weather forecast...")
@@ -675,6 +683,63 @@ def render_monitoring(bundles) -> None:
         render_drift(bundles)
 
 
+def render_station_clusters(clusters) -> None:
+    st.header("Station Clusters")
+    st.write(
+        "Operational station segments learned from cross-target (departure + arrival) "
+        "15-minute demand profiles, used to flag rebalancing risk."
+    )
+    if clusters is None or clusters.table.empty:
+        st.info(
+            "Station cluster artifacts are not packaged yet. Generate them with "
+            "`python -m bixi.cluster --run-id cloud-2024` and commit "
+            "`artifacts/streamlit-community-cloud/cloud-2024/clusters/`."
+        )
+        return
+
+    table = clusters.table.copy()
+    table = table[(table["latitude"] != 0) & (table["longitude"] != 0)]
+    summary = clusters.summary or {}
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Stations", len(table))
+    c2.metric("Clusters", summary.get("n_clusters", int(table["cluster"].nunique())))
+    silhouette = (summary.get("scores") or {}).get("silhouette")
+    c3.metric("Algorithm", summary.get("algorithm", "-"),
+              f"silhouette {silhouette:.3f}" if isinstance(silhouette, (int, float)) else None)
+
+    labels = sorted(table["cluster_label"].unique())
+    chosen = st.multiselect("Filter clusters", labels, default=labels)
+    view = table[table["cluster_label"].isin(chosen)] if chosen else table
+
+    fig = px.scatter_mapbox(
+        view, lat="latitude", lon="longitude", color="cluster_label",
+        hover_name="station_name",
+        hover_data={"demand_level": True, "rebalancing_flag": True,
+                    "dep_intensity": ":.2f", "arr_intensity": ":.2f",
+                    "latitude": False, "longitude": False},
+        zoom=11, height=600, center={"lat": MONTREAL_LAT, "lon": MONTREAL_LON},
+    )
+    fig.update_layout(mapbox_style="open-street-map",
+                      margin=dict(l=0, r=0, t=0, b=0), legend_title="Cluster")
+    st.plotly_chart(fig, width="stretch")
+
+    agg = (
+        table.groupby(["cluster_label", "demand_level", "rebalancing_flag"])
+        .agg(stations=("station_name", "count"),
+             dep_intensity=("dep_intensity", "mean"),
+             arr_intensity=("arr_intensity", "mean"))
+        .reset_index().sort_values("stations", ascending=False)
+    )
+    st.subheader("Cluster summary")
+    st.dataframe(agg, width="stretch")
+    render_insight(
+        "Departure-heavy clusters tend to be commuter-origin (residential) stations that "
+        "empty in the morning; arrival-heavy clusters are commuter destinations (downtown/"
+        "campus) that fill up — the pairing drives rebalancing priorities."
+    )
+
+
 def render_sidebar(bundles) -> str:
     st.sidebar.title("BIXI Demand")
     st.sidebar.caption("Mode: Streamlit Community Cloud packaged local artifacts")
@@ -686,6 +751,7 @@ def render_sidebar(bundles) -> str:
         [
             "7-Day Demand Prediction",
             "Demand Prediction with Custom Inputs",
+            "Station Clusters",
             "Predictive Model Monitoring",
         ],
     )
@@ -700,6 +766,8 @@ def main() -> None:
         render_page_7_day_prediction(bundles)
     elif page == "Demand Prediction with Custom Inputs":
         render_custom_inputs(bundles)
+    elif page == "Station Clusters":
+        render_station_clusters(cached_clusters())
     else:
         render_monitoring(bundles)
 

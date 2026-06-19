@@ -21,7 +21,7 @@ from botocore.exceptions import ClientError
 
 from . import config
 from .data import StationEncoder  # noqa: F401  # required for encoder.pkl unpickling
-from .streamlit_local_serving import LocalTargetBundle
+from .streamlit_local_serving import LocalTargetBundle, StationClusters
 
 
 DEFAULT_RUN_ID = "cloud-2024"
@@ -165,6 +165,25 @@ def load_s3_bundles(settings: S3ArtifactConfig | None = None) -> dict[str, Local
     settings = settings or s3_artifact_config()
     s3_client = boto3.client("s3", region_name=settings.region)
     return {target: _load_target_bundle(s3_client, settings, target) for target in config.TARGETS}
+
+
+def _cluster_prefix(settings: S3ArtifactConfig) -> str:
+    return f"{settings.pipeline_prefix}/runs/{settings.run_id}/clustering"
+
+
+def load_station_clusters(settings: S3ArtifactConfig | None = None) -> StationClusters | None:
+    """Load the cross-target station clustering artifact from S3, or ``None``."""
+    settings = settings or s3_artifact_config()
+    s3_client = boto3.client("s3", region_name=settings.region)
+    prefix = _cluster_prefix(settings)
+    payload = _read_s3_bytes(s3_client, settings.pipeline_bucket,
+                             f"{prefix}/station_clusters.parquet", required=False)
+    if payload is None:
+        return None
+    table = pd.read_parquet(io.BytesIO(payload))
+    summary = _read_json_s3(s3_client, settings.pipeline_bucket,
+                            f"{prefix}/cluster_summary.json", {})
+    return StationClusters(table=table, summary=summary)
 
 
 def s3_source_summary(settings: S3ArtifactConfig | None = None) -> dict[str, str]:

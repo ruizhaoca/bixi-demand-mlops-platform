@@ -1,305 +1,302 @@
-# BIXI Station Hourly Demand Prediction
-**Live demo:** https://bixidashboard.streamlit.app/
+# BIXI Demand MLOps Platform
+
+Production-grade MLOps platform that forecasts **15-minute** bike-sharing demand for
+**every** BIXI station in Montreal (~1,100+ stations), separately for **departures**
+and **arrivals**, and serves the models through interactive Streamlit apps. The
+project turns a course-1 notebook prototype into a resumable, cloud-native pipeline
+with full experiment tracking, a model registry, explainability, fairness analysis,
+four-type drift monitoring, containerization, CI/CD, and AWS infrastructure-as-code.
+
+**Live demos**
+
+- Local Streamlit deployment (Community Cloud, packaged artifacts): https://bixidemandlocal.streamlit.app/
+- EC2 Streamlit deployment (S3-backed artifacts): http://3.16.250.166:8501/
 
 ---
-![1](https://github.com/user-attachments/assets/be920a54-8920-4684-b21a-f190809852b1)
+
+## What the platform does
+
+- **15-minute resolution** demand instead of hourly — 4× finer, far more useful for
+  operational rebalancing.
+- **Departures and arrivals predicted separately** through one shared pipeline run
+  twice, surfacing rebalancing pressure (high-departure / low-arrival stations).
+- **All stations**, not just the busiest few.
+- **Leakage-safe features**: temporal (cyclical 15-min slot, day-of-week, month),
+  historical 2024 profile baselines built **leave-one-out** on the training rows,
+  and merged 15-minute weather.
+- **Advanced encoding** of the high-cardinality `station_name` (frequency + smoothed
+  target encoding), **fit on train only**.
+- **Multi-model selection**: LightGBM / XGBoost candidates **+ FLAML AutoML** search
+  **+ Optuna** Bayesian HPO; the best model by validation RMSE is selected and
+  promoted automatically.
+- **MLflow** experiment tracking + Model Registry (`production` alias).
+- **SHAP + LIME** explainability, **fairness** error-parity analysis across demand
+  tiers and geography, and **Evidently** drift reports (feature / target /
+  prediction / concept).
+- **Operational station clustering** (cross-target): groups stations by their
+  departure/arrival demand shape, auto-selecting among K-Means / GMM / Agglomerative /
+  DBSCAN, and flags **rebalancing risk** (departure-heavy vs arrival-heavy) with a
+  cluster feature-drift analysis.
+- **Containerized** training and serving images, a **GitHub Actions** CI pipeline,
+  and **AWS CDK** infrastructure (VPC, S3, MLflow on EC2, AWS Batch training).
 
 ---
-![2](https://github.com/user-attachments/assets/fd0ca475-885d-44b0-9c9d-f8534ac9ef9e)
+
+## Architecture
+
+```
+GitHub ──push──► GitHub Actions CI  (pytest + build training & Streamlit images)
+
+AWS (us-east-2), provisioned by AWS CDK (infra/):
+  BixiNetwork  VPC (public subnets, no NAT)
+  BixiStorage  S3 pipeline bucket (checkpoints / artifacts / reports) + SSM param
+  BixiMlflow   MLflow tracking server on EC2 + S3 artifact store
+  BixiBatch    ECR training image + AWS Batch compute + job definition
+
+  AWS Batch runs `python -m bixi.pipeline` (docker/Dockerfile.train) over the full
+  dataset, reading source data from s3://insy684 and writing checkpoints, models,
+  explainability/fairness/drift artifacts to the CDK pipeline bucket; runs + models
+  are tracked in MLflow.
+
+Serving:
+  app.py      Streamlit Community Cloud — committed artifacts (no AWS at runtime)
+  app_ec2.py  EC2 Streamlit container — loads the same artifacts from S3
+```
+
+The pipeline is **staged and resumable**. Each stage writes a `_SUCCESS` marker to
+`s3://<pipeline-bucket>/bixi-mlops/runs/<run-id>/<target>/<stage>/`, so a run can be
+resumed from any step. The identical code runs locally on a station subsample and on
+AWS Batch over the full dataset.
+
+```
+ingest -> features -> data -> train -> explain -> fairness -> drift -> register
+```
+
+- `ingest` — download the raw BIXI trip archives + Open-Meteo weather and clean trips
+  into 15-minute station demand tables (`bixi.ingest` + `bixi.demand_ingestion_cleaning`).
+- `features` — build the leakage-safe feature tables (`bixi.feature_engineering`).
+- `data` — range-filter, leakage-safe station encoding, demand tiers (`bixi.data`).
+- `train` — candidates + FLAML + Optuna, select best, log to MLflow (`bixi.models`).
+- `explain` / `fairness` / `drift` — SHAP+LIME, error parity, Evidently 4-type drift.
+- `register` — promote the best run to the `production` alias (`bixi.registry`).
+
+`ingest` and `features` are the from-scratch rebuild stages; the **default run starts
+at `data`** because the cleaned data and feature tables already live in S3.
 
 ---
-## Project Overview
-This project builds an **end-to-end machine learning pipeline** to predict **hourly bike-sharing demand** for BIXI stations in Montreal. Using historical **BIXI trip data** and **Montreal weather data**, the pipeline performs data cleaning and feature engineering on **temporal and weather features**, trains a **LightGBM regression model** with **Bayesian hyperparameter optimization**, and groups stations into demand tiers using **K-Means clustering**. The **Streamlit app** integrates a **16-day weather forecast** from the **Open-Meteo API** and visualizes station clusters with a **PyDeck heatmap** to support station-level operational planning.
+
+## Repository structure
+
+```
+├── src/bixi/                       # the pipeline package
+│   ├── config.py                   # central config + data/feature contract + stages
+│   ├── io.py                       # S3 + local I/O helpers (default boto3 chain)
+│   ├── ingest.py                   # ingest stage: weather + trips + demand cleaning
+│   ├── demand_ingestion_cleaning.py# raw trip download/extract -> 15-min demand CSVs
+│   ├── feature_engineering.py      # features stage: leakage-safe feature tables
+│   ├── data.py                     # range filter, station encoding, demand tiers
+│   ├── models.py                   # candidates, FLAML AutoML, Optuna HPO, metrics
+│   ├── pipeline.py                 # resumable staged runner (python -m bixi.pipeline)
+│   ├── cluster.py                  # cross-target station clustering (python -m bixi.cluster)
+│   ├── explain.py                  # SHAP + LIME artifacts
+│   ├── fairness.py                 # error-parity fairness report
+│   ├── drift.py                    # Evidently 4-type drift reports
+│   ├── registry.py                 # MLflow tracking + registry promotion
+│   ├── inference.py                # load production model + predict contract
+│   ├── streamlit_local_serving.py  # local/packaged-artifact serving helpers
+│   └── streamlit_s3_serving.py     # S3-backed serving helpers (EC2)
+├── app.py                          # Streamlit app (Community Cloud, packaged artifacts)
+├── app_ec2.py                      # Streamlit entrypoint (EC2 + S3 artifacts)
+├── artifacts/streamlit-community-cloud/cloud-2024/   # committed serving artifacts
+├── docker/
+│   ├── Dockerfile.train            # AWS Batch / local training & pipeline image
+│   └── Dockerfile.streamlit_ec2    # EC2 Streamlit serving image
+├── infra/                          # AWS CDK app
+│   ├── app.py                      # BixiNetwork / BixiStorage / BixiMlflow / BixiBatch
+│   └── bixi_infra/                 # network_stack / storage_stack / mlflow_stack / batch_stack
+├── scripts/                        # deploy_infra.sh, run_pipeline.sh, teardown.sh, ...
+├── docs/                           # design + ops guides (+ presentation assets)
+├── notebooks/02_modeling_drift.ipynb
+├── tests/                          # pytest suite (synthetic data, no network)
+├── requirements.txt                # Streamlit serving deps
+├── requirements-train.txt          # pipeline / training deps
+└── runtime.txt                     # Python 3.12
+```
 
 ---
-## Phase 2 — Production MLOps modeling pipeline
 
-The course-2 work upgrades the modeling into a **resumable, cloud-native pipeline**
-(`src/bixi/`, `python -m bixi.pipeline`): 15-minute demand, **departures and
-arrivals**, **all** stations, leakage-safe encoding, **multi-model + FLAML AutoML +
-Optuna**, **MLflow** tracking & registry, **SHAP/LIME**, **fairness**, and
-**4-type drift** — trained in the cloud on **AWS Batch**, with the MLflow server,
-S3, VPC and Batch all provisioned by **AWS CDK** (`infra/`).
+## Where every asset lives (S3 + MLflow)
 
-- Design & decisions: [`docs/phase2_modeling.md`](docs/phase2_modeling.md)
-- Run in the cloud: `./scripts/run_pipeline.sh --targets both --run-id 2024-prod`
-  (resume a step with `--from train` / `--only drift`)
-- Deploy infra: `BIXI_ALLOW_CIDR=<your-ip>/32 ./scripts/deploy_infra.sh` ·
-  teardown (backs up first): `./scripts/teardown.sh`
-
-### Where every asset lives (S3 + MLflow)
-
-Two buckets. **`insy684`** is persistent (created in Phase 1, *not* CDK-managed).
+Two buckets. **`insy684`** is persistent (source data + backups, *not* CDK-managed).
 The **CDK pipeline bucket** holds the pipeline outputs + MLflow artifacts and is
 **deleted on `cdk destroy`** — `scripts/teardown.sh` backs it up to `insy684` first.
-Its name is in SSM `/bixi/pipeline-bucket` and the `BixiStorage` CDK output (currently
-`bixistorage-pipelinebucketb967bd35-icnkid23rfsa`).
+Its name is in SSM `/bixi/pipeline-bucket` and the `BixiStorage` CDK output.
 
 ```
 s3://insy684/                         # PERSISTENT (source data + backups)
 ├── bixi-data/{2024,2025,2026}/       # raw BIXI open-data trip CSVs
-├── weather-data/                     # 15-min Montreal weather (Open-Meteo): 2024, 2025-may, 2025-oct
-├── processed-data/                   # Phase-1 feature tables (originals)
-├── processed-data-clean/             # date-filtered canonical copies (this PR; scripts/fix_misranged_features.py)
-├── bixi-models/                      # course-1 hourly model (legacy)
-├── bixi-mlops/runs/…                 # earlier LOCAL smoke-run checkpoints (run-id "smoke")
-└── bixi-mlops-backup/                # created by scripts/teardown.sh (artifacts + mlflow_runs_snapshot.json)
+├── weather-data/                     # 15-min Montreal weather (Open-Meteo)
+├── processed-data/                   # 15-min demand CSVs + feature tables (parquet)
+├── bixi-serving-artifacts/           # serving baselines for the Streamlit apps
+└── bixi-mlops-backup/                # created by scripts/teardown.sh
 
-s3://<CDK pipeline bucket>/           # EPHEMERAL (cloud run outputs; backed up on teardown)
-├── bixi-mlops/runs/<run-id>/<target>/    # <target> = departure | arrival ; cloud run-id = "cloud-2024"
+s3://<CDK pipeline bucket>/           # EPHEMERAL (cloud run outputs)
+├── bixi-mlops/runs/<run-id>/<target>/    # <target> = departure | arrival
 │   ├── data/      encoder.pkl, tiers.json, data_summary.json
-│   ├── train/     best_model.pkl, metrics.json  (selected model + R²/RMSE/MAE per split)
-│   ├── explain/   shap_summary_beeswarm.png, shap_importance_bar.png, shap_waterfall_*.png,
-│   │              shap_importance.csv, lime_instance_*.html
-│   ├── fairness/  fairness_report.json  (error parity across demand tiers + geo zones)
-│   ├── drift/     {feature,target,prediction}_drift_{2025_may,2025_oct}.html,
-│   │              concept_regression_{2025_may,2025_oct}.html, drift_summary.json
+│   ├── train/     best_model.pkl, metrics.json  (R²/RMSE/MAE per split)
+│   ├── explain/   shap_*.png/csv, lime_instance_*.html
+│   ├── fairness/  fairness_report.json
+│   ├── drift/     {feature,target,prediction}_drift_*.html, concept_*.html, drift_summary.json
 │   └── register/  registered_model.json
-├── mlflow/<experiment_id>/           # MLflow run artifacts (logged models, etc.)
+├── mlflow/<experiment_id>/           # MLflow run artifacts
 └── mlflow-bootstrap/                 # MLflow EC2 bootstrap logs (debug)
 ```
 
-**MLflow** (CDK output `BixiMlflow.MlflowPublicUrl`, classic 2.x UI): experiments
-`bixi-demand-departure` / `bixi-demand-arrival` (every candidate + FLAML + Optuna run);
-each best model registered with the **`production`** alias.
+**MLflow** (CDK output `BixiMlflow.MlflowPublicUrl`): experiments
+`bixi-demand-departure` / `bixi-demand-arrival` (every candidate + FLAML + Optuna
+run); each best model registered with the **`production`** alias.
 
 ---
-## Repository Structure
 
-```
-├── data/
-│   ├── .gitattributes
-│   └── model_df.zip           # Feature-engineered dataset: output of the first notebook and input to the last two notebooks
-├── notebooks/
-│   ├── data_cleaning_eda_feature_engineering.ipynb  
-│   ├── model_clustering.ipynb # Station clustering analysis
-│   └── model_lightgbm.ipynb   # Prediction model training & evaluation
-├── app.py                     # Streamlit dashboard app; requires the five files below as inputs
-├── api/
-│   └── main.py                # FastAPI backend for model serving
-├── src/
-│   ├── predictor.py           # Shared model loading, feature building, and prediction logic
-│   └── s3_io.py               # S3 readers used by the FastAPI backend
-├── Dockerfile                 # Container entrypoint for the FastAPI backend
-├── .env.example               # Safe configuration template; does not contain secrets
-├── model_lightgbm.txt         # Trained LightGBM model
-├── meta_lightgbm.pkl          # Model metadata & feature lookups
-├── station_clusters.csv       # Station cluster assignments
-├── requirements.txt           # Python dependencies
-└── runtime.txt                # Python runtime version
-```
+## Running the pipeline
 
----
-## Workflow
+### Full rebuild from scratch (one command)
 
-### 1. Data Cleaning, EDA & Feature Engineering
-**Notebook:** `data_cleaning_eda_feature_engineering.ipynb`
-
-- **Data Sources:** [BIXI Montreal Open Data](https://bixi.com/en/open-data/) and [Montreal Weather Open Data](https://montreal.weatherstats.ca/download.html)
-- **Cleaning Steps:**
-  - Convert timestamps to datetime and filter the data to 2024 and May/Oct 2025
-  - Fill missing values using column-wise means and linear interpolation
-  - Remove invalid trips (unfillable missing values; outlier durations)
-  - Filter to the top 400 stations by 2024 trip volume
-- **Exploratory Analysis:**
-  - Demand patterns by hour, day of week, and month
-  - Holiday vs. non-holiday demand comparison
-  - Distribution and correlation analyses of weather variables
-- **Features engineered:**
-
-| Feature | Description |
-|---------|-------------|
-| `station_hour_demand_24` | Mean 2024 demand for station × hour |
-| `station_dow_demand_24` | Mean 2024 demand for station × day-of-week |
-| `station_month_demand_24` | Mean 2024 demand for station × month |
-| `hour`, `dow`, `month` | Temporal indicators |
-| `is_holiday` | Quebec/Montreal public holiday flag |
-| `temperature`, `feels_like` | Hourly temperature metrics |
-| `wind_speed` | Wind speed in km/h |
-| `bad_weather` | Binary flag (humidity > 85% and visibility < 10km) |
-
-**Target Variable:** `total_demand` (sum of departures and returns per station per hour)
-
----
-### 2. Station Clustering
-**Notebook:** `model_clustering.ipynb`
-
-- **Algorithm:** K-Means (k=3)
-- **Clustering Feature:** Mean hourly demand per station (2024)
-- **Output Clusters:**
-  - **Low demand:** 247 stations (~7.4 avg trips/hour)
-  - **Medium demand:** 120 stations (~12.2 avg trips/hour)
-  - **High demand:** 33 stations (~19.2 avg trips/hour)
-- **Validation:** Silhouette score indicates moderate-to-strong cluster separation
-
----
-### 3. Model Training & Evaluation
-**Notebook:** `model_lightgbm.ipynb`
-
-- **Algorithm:** LightGBM (Gradient Boosting Decision Trees)
-- **Data Split (chronological):**
-  - Training: 2024 data (83%) — build 2024-based baseline features for forecasting
-  - Validation: May 2025 (9%)
-  - Test: Oct 2025 (8%) — May and Oct show moderate demand and are more representative months for validation and testing
-- **Hyperparameter Tuning:** Bayesian optimization via Optuna (40 trials)
-- **Evaluation Metrics:**
-
-| Dataset | R² | RMSE | MAE |
-|---------|-----|------|-----|
-| Train (2024) | 0.72 | 5.08 | 3.21 |
-| Validation (May 2025) | 0.64 | 5.75 | 3.73 |
-| Test (Oct 2025) | 0.63 | 5.85 | 3.82 |
-
-- **Model Interpretation:** SHAP analysis reveals top predictors are `station_hour_demand_24`, `station_month_demand_24`, and `temperature`
-
----
-### 4. Streamlit Application
-**File:** `app.py`
-
-The dashboard provides three views:
-
-- **16-Day Demand Forecast**
-   - Use weather forecast data from [Open-Meteo API](https://open-meteo.com/) (cached daily)
-   - Single time-point prediction or full-day hourly forecast
-   - Interactive line charts of predicted demand with a weather overlay
-
-- **Custom Input Forecast**
-   - Manual weather parameter entry
-   - Predictions for any future datetime
-
-- **Station Clusters Visualization**
-   - Interactive PyDeck heatmap with station-level tooltips
-   - Filter by cluster (low/medium/high)
-
----
-## FastAPI Backend and S3 Endpoint Mode
-
-The project also includes a FastAPI backend for production-style model serving. The intended cloud architecture is:
-
-```
-Local frontend / Streamlit / API client
-    -> calls FastAPI endpoint on EC2
-    -> FastAPI loads model artifacts from local files or S3
-    -> backend returns prediction JSON
-```
-
-### Security note
-
-Do not hard-code AWS credentials in Python files, notebooks, README files, or GitHub. On EC2, the backend should access S3 through an attached IAM Role. Local development can use the AWS CLI profile or environment credentials outside the repository.
-
-### Local development
-
-By default, the API loads the local model artifacts already present in the repository:
+Downloads + cleans raw trips, builds features, then trains/evaluates/monitors and
+registers — for both targets:
 
 ```bash
-pip install -r requirements.txt
-uvicorn api.main:app --reload
+python -m bixi.pipeline --from ingest --targets both --run-id rebuild
 ```
 
-Open:
-
-```
-http://localhost:8000/docs
-```
-
-Health check:
+### Lean cloud run (data already in S3)
 
 ```bash
-curl http://localhost:8000/health
+# default stages: data -> train -> explain -> fairness -> drift -> register
+python -m bixi.pipeline --targets both --run-id cloud-2024 --n-trials 40
+# resume a step:        --from train      |   re-run one stage:   --only drift --force
 ```
 
-Example prediction request:
+### On AWS Batch
 
 ```bash
-curl -X POST http://localhost:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "station": "10e avenue / Masson",
-    "date": "2026-01-01",
-    "hour": 8,
-    "is_holiday": 0,
-    "temperature": 22.5,
-    "feels_like": 23.0,
-    "wind_speed": 12.0,
-    "bad_weather": 0
-  }'
+BIXI_ALLOW_CIDR=<your-ip>/32 ./scripts/deploy_infra.sh   # provision infra (CDK)
+./scripts/run_pipeline.sh --targets both --run-id cloud-2024   # submit Batch job
+./scripts/teardown.sh                                     # backup + cdk destroy
 ```
 
-### EC2 / S3 deployment mode
-
-Copy `.env.example` to `.env` only on the server if needed. Do not commit `.env`.
-
-For EC2 deployment, set:
+### Fast local smoke test (station subsample, no Batch)
 
 ```bash
-export AWS_REGION=us-east-2
-export S3_BUCKET=insy684
-export MODEL_SOURCE=s3
-export MODEL_KEY=bixi-models/model_lightgbm.txt
-export META_KEY=bixi-models/meta_lightgbm.pkl
-```
-
-The exact `MODEL_KEY` and `META_KEY` values must match the S3 paths uploaded by the team.
-
-Docker run example:
-
-```bash
-docker build -t bixi-demand-api .
-docker run -p 8000:8000 \
-  -e AWS_REGION=us-east-2 \
-  -e S3_BUCKET=insy684 \
-  -e MODEL_SOURCE=s3 \
-  -e MODEL_KEY=bixi-models/model_lightgbm.txt \
-  -e META_KEY=bixi-models/meta_lightgbm.pkl \
-  bixi-demand-api
-```
-
-The EC2 security group must allow inbound traffic on the API port, such as `8000`, for demo access.
-
-### Tests
-
-Run:
-
-```bash
-pytest -q
-```
-
-### CI
-
-GitHub Actions runs the test suite and checks that the Docker image can build on pull requests into `main`.
-
-Workflow file:
-
-```
-.github/workflows/ci.yml
-```
-
-Team guide:
-
-```
-docs/github_actions_guide.md
-```
-
-AWS deployment notes are in:
-
-```
-docs/aws_deployment_checklist.md
-```
-
-Model/S3/EC2 operations guide:
-
-```
-docs/model_s3_ec2_operations_guide.md
+python -m bixi.pipeline --targets departure --run-id smoke \
+    --local-dir ~/bixi_data --sample-stations 80 --n-trials 8 --flaml-budget 30
 ```
 
 ---
-## Limitations
-- **Limited feature set:** Features are restricted to historical demand, time, and weather. The model struggles to capture extreme peaks.
-- **Departures vs. arrivals not separated:** The model predicts only total demand, which limits operational usefulness.
-- **Station capacity not considered:** All stations are compared by usage intensity without accounting for dock capacity, reducing practical relevance.
-- **Sample selection bias:** The dataset includes only the top 400 stations by demand (out of >1100). Lower-volume stations may exhibit different patterns.
-- **Historical pattern reinforcement:** Heavy reliance on historical demand may miss emerging trends and changes.
+
+## Station clustering (cross-target)
+
+A standalone capability that groups stations by their departure + arrival demand
+profile across the day, auto-selects among K-Means / GMM / Agglomerative / DBSCAN
+(silhouette / Davies-Bouldin / Calinski-Harabasz), labels each cluster by demand
+level and **rebalancing risk** (departure-heavy vs arrival-heavy), and runs a cluster
+feature-drift analysis. Outputs `station_clusters.csv` + an MLflow experiment
+(`bixi-station-clusters`); surfaced on the Streamlit **Station Clusters** map page.
+
+```bash
+python -m bixi.cluster --run-id cloud-2024            # against S3 (needs AWS creds)
+python -m bixi.cluster --run-id dev --local-dir ~/bixi_data   # local CSVs
+```
+
+Design & method: [`docs/phase3_clustering.md`](docs/phase3_clustering.md).
 
 ---
+
+## Results (selected model: LightGBM + Optuna, per split)
+
+15-minute slot-level demand is far noisier than hourly aggregates (many zero-demand
+slots), so absolute R² is modest by design; errors are well under one trip per slot.
+
+| Target | Split | R² | RMSE | MAE |
+|--------|-------|----|------|-----|
+| Departure | Validation (May 2025) | 0.327 | 0.994 | 0.565 |
+| Departure | Test (Oct 2025) | 0.334 | 1.035 | 0.591 |
+| Arrival | Validation (May 2025) | 0.339 | 0.976 | 0.554 |
+| Arrival | Test (Oct 2025) | 0.339 | 1.026 | 0.585 |
+
+Both targets select `lgbm_optuna`. SHAP attributes most signal to the 2024 historical
+baselines and the cyclical time-of-day features, with weather as a secondary driver.
+
+---
+
+## Streamlit apps
+
+Both apps share one UI and offer: a multi-day demand forecast (Open-Meteo weather),
+custom-input single predictions, a **Station Clusters** map page (Plotly), and a
+model-monitoring page (SHAP, fairness, drift).
+
+- **`app.py`** — Streamlit Community Cloud. Loads model artifacts committed under
+  `artifacts/streamlit-community-cloud/cloud-2024/`; needs no AWS at runtime.
+  ```bash
+  pip install -r requirements.txt
+  streamlit run app.py
+  ```
+- **`app_ec2.py`** — EC2 deployment. Reuses `app.py`'s UI but loads the same Phase-2
+  artifacts from S3. Containerized via `docker/Dockerfile.streamlit_ec2`; see
+  [`docs/ec2_streamlit_deployment_guide.md`](docs/ec2_streamlit_deployment_guide.md).
+
+---
+
+## Docker
+
+```bash
+# Training / pipeline image (used by AWS Batch; runnable locally)
+docker build -f docker/Dockerfile.train -t bixi-pipeline .
+docker run --rm bixi-pipeline --help
+
+# EC2 Streamlit serving image
+docker build -f docker/Dockerfile.streamlit_ec2 -t bixi-streamlit .
+```
+
+---
+
+## Tests & CI
+
+```bash
+pip install -r requirements-train.txt pytest
+pytest -q tests/
+```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on pull requests to `main`, pushes,
+and manual dispatch: it installs deps, runs the test suite, builds **both** Docker
+images (training + Streamlit), and smoke-tests the pipeline image (`--help`, no AWS).
+Team guide: [`docs/github_actions_guide.md`](docs/github_actions_guide.md).
+
+---
+
+## Documentation
+
+- Phase-2 modeling design & decisions: [`docs/phase2_modeling.md`](docs/phase2_modeling.md)
+- Phase-3 station clustering: [`docs/phase3_clustering.md`](docs/phase3_clustering.md)
+- EC2 Streamlit deployment: [`docs/ec2_streamlit_deployment_guide.md`](docs/ec2_streamlit_deployment_guide.md)
+- Model / S3 / EC2 operations: [`docs/model_s3_ec2_operations_guide.md`](docs/model_s3_ec2_operations_guide.md)
+- GitHub Actions / CI: [`docs/github_actions_guide.md`](docs/github_actions_guide.md)
+
+### Security
+
+No AWS credentials are committed. Code uses the default boto3 credential chain — SSO
+locally, an attached IAM role on EC2 / AWS Batch. `.env` is git-ignored; only
+`.env.example` (a template) is tracked.
+
+---
+
 ## Team
-Rui Zhao, Laura Manzanos Zuriarrain, Ibukunoluwa Adeleye, Mariam Gueye, Calvin Chun Fung Yip
+
+Repository: **bixi-demand-mlops-platform**
+
+| Name | GitHub |
+|------|--------|
+| Othmane Zizi | [othmane-zizi-pro](https://github.com/othmane-zizi-pro) |
+| Sarah Liu | [sarahliu-mma](https://github.com/sarahliu-mma) |
+| Ruihe Zhang (Louis) | [Mudkipython](https://github.com/Mudkipython) |
+| Rui Zhao | [ruizhaoca](https://github.com/ruizhaoca) |

@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Submit the BIXI pipeline to AWS Batch (cloud training).
 #
-#   ./scripts/run_pipeline.sh                         # whole pipeline, both targets
+#   ./scripts/run_pipeline.sh                         # default run (data..register), both targets
+#   ./scripts/run_pipeline.sh --from ingest           # FULL rebuild from scratch:
+#                                                     #   ingest (raw download + 15-min demand cleaning)
+#                                                     #   -> features (leakage-safe feature tables)
+#                                                     #   -> data -> train -> ... -> register
 #   ./scripts/run_pipeline.sh --from train            # resume from training
 #   ./scripts/run_pipeline.sh --targets departure --only drift --force
 #

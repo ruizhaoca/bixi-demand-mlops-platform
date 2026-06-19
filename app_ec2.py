@@ -23,12 +23,21 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 import app as community_app  # noqa: E402
 from bixi.streamlit_local_serving import common_stations  # noqa: E402
-from bixi.streamlit_s3_serving import load_s3_bundles, s3_source_summary  # noqa: E402
+from bixi.streamlit_s3_serving import (  # noqa: E402
+    load_s3_bundles,
+    load_station_clusters,
+    s3_source_summary,
+)
 
 
 @st.cache_resource(show_spinner="Loading Phase-2 model artifacts from S3...")
 def cached_s3_bundles():
     return load_s3_bundles()
+
+
+@st.cache_resource(show_spinner="Loading station clusters from S3...")
+def cached_s3_clusters():
+    return load_station_clusters()
 
 
 def render_ec2_sidebar(bundles) -> str:
@@ -45,12 +54,14 @@ def render_ec2_sidebar(bundles) -> str:
         [
             "7-Day Demand Prediction",
             "Demand Prediction with Custom Inputs",
+            "Station Clusters",
             "Predictive Model Monitoring",
         ],
     )
 
 
 community_app.cached_bundles = cached_s3_bundles
+community_app.cached_clusters = cached_s3_clusters
 community_app.render_sidebar = render_ec2_sidebar
 
 

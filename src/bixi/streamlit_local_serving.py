@@ -157,6 +157,29 @@ def common_stations(bundles: Mapping[str, LocalTargetBundle]) -> list[str]:
     return sorted(set.intersection(*station_sets))
 
 
+@dataclass
+class StationClusters:
+    """Cross-target station clustering artifact (one model over both targets)."""
+    table: pd.DataFrame          # station_name, lat/lon, cluster, cluster_label, ...
+    summary: dict                # algorithm, n_clusters, scores, drift, ...
+
+
+def load_station_clusters(artifact_root: str | Path = DEFAULT_ARTIFACT_ROOT) -> StationClusters | None:
+    """Load packaged station clusters, or ``None`` if not generated yet.
+
+    The clustering artifact is cross-target, so it lives at ``<root>/clusters/``
+    rather than under a per-target folder.
+    """
+    root = Path(artifact_root) / "clusters"
+    table_path = root / "station_clusters.parquet"
+    if not table_path.exists():
+        return None
+    return StationClusters(
+        table=pd.read_parquet(table_path),
+        summary=_read_json(root / "cluster_summary.json", {}),
+    )
+
+
 def slot_label(slot_of_day: int) -> str:
     hour = slot_of_day // 4
     minute = (slot_of_day % 4) * 15

@@ -217,6 +217,29 @@ def artifact_specs(
                 ),
             ]
         )
+
+    # Cross-target station clustering (Phase 3) — one artifact set per run, not per
+    # target. Optional: present only after `python -m bixi.cluster` has been run.
+    cluster_prefix = f"{pipeline_prefix.rstrip('/')}/runs/{run_id}/clustering"
+    clusters_root = bundle_root / "clusters"
+    specs.extend(
+        [
+            ArtifactSpec(
+                pipeline_bucket,
+                f"{cluster_prefix}/station_clusters.parquet",
+                clusters_root / "station_clusters.parquet",
+                required=False,
+                source="pipeline-cluster",
+            ),
+            ArtifactSpec(
+                pipeline_bucket,
+                f"{cluster_prefix}/cluster_summary.json",
+                clusters_root / "cluster_summary.json",
+                required=False,
+                source="pipeline-cluster",
+            ),
+        ]
+    )
     return specs
 
 

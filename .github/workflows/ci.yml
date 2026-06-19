@@ -18,38 +18,23 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"   # matches runtime.txt + the Docker images
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r requirements-train.txt   # Phase-2 pipeline test deps
+          pip install -r requirements.txt          # Streamlit serving deps
+          pip install -r requirements-train.txt    # pipeline (Phase-2) deps
+          pip install pytest                        # test runner (not a runtime dep)
 
       - name: Run tests
-        run: pytest -q
+        run: pytest -q tests/   # scope to tests/ so stale infra/cdk.out copies aren't collected
 
-      - name: Build Docker image
-        run: docker build -t bixi-demand-api .
+      - name: Build training / pipeline image
+        run: docker build -f docker/Dockerfile.train -t bixi-pipeline .
 
-      - name: Smoke test Docker container
-        run: |
-          docker run -d \
-            --name bixi-demand-api-ci \
-            -p 8000:8000 \
-            -e MODEL_SOURCE=local \
-            bixi-demand-api
+      - name: Build Streamlit (EC2) image
+        run: docker build -f docker/Dockerfile.streamlit_ec2 -t bixi-streamlit .
 
-          for i in {1..30}; do
-            if curl -fsS http://localhost:8000/health; then
-              exit 0
-            fi
-            sleep 2
-          done
-
-          docker logs bixi-demand-api-ci
-          exit 1
-
-      - name: Clean up Docker container
-        if: always()
-        run: docker rm -f bixi-demand-api-ci || true
+      - name: Smoke test pipeline image (no AWS)
+        run: docker run --rm bixi-pipeline --help

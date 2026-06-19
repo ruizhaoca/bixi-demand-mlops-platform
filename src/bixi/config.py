@@ -102,11 +102,15 @@ def split_specs(target: str) -> dict[str, SplitSpec]:
 # --------------------------------------------------------------------------- #
 # Pipeline stages
 # --------------------------------------------------------------------------- #
-# `ingest` (raw download -> S3) is reproducibility-only and excluded from the
-# default run because the good raw files already live in S3.
+# `ingest` (raw trip/weather download + 15-min demand cleaning -> S3) and
+# `features` (build the leakage-safe feature tables -> S3) are the from-scratch
+# rebuild stages. They are excluded from the default run because the good raw
+# files and feature tables already live in S3 — run the full rebuild explicitly
+# with ``python -m bixi.pipeline --from ingest``.
 INGEST_STAGE = "ingest"
+FEATURES_STAGE = "features"
 DEFAULT_STAGES = ["data", "train", "explain", "fairness", "drift", "register"]
-ALL_STAGES = [INGEST_STAGE] + DEFAULT_STAGES
+ALL_STAGES = [INGEST_STAGE, FEATURES_STAGE] + DEFAULT_STAGES
 
 
 def _join(*parts: str) -> str:
@@ -124,6 +128,17 @@ def stage_prefix(run_id: str, target: str, stage: str) -> str:
 
 def success_key(run_id: str, target: str, stage: str) -> str:
     return _join(stage_prefix(run_id, target, stage), "_SUCCESS")
+
+
+# Station clustering is cross-target (one model over both departures + arrivals),
+# so its outputs live at a run-level prefix, NOT under a per-target prefix.
+def cluster_prefix(run_id: str) -> str:
+    """S3 key prefix (no bucket) for the cross-target clustering outputs."""
+    return _join(PIPELINE_PREFIX, "runs", run_id, "clustering")
+
+
+# MLflow experiment name for the cross-target station-clustering runs.
+CLUSTER_EXPERIMENT = "bixi-station-clusters"
 
 
 # MLflow experiment + registered model names, per target.

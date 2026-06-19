@@ -1,32 +1,56 @@
-"""
-Feature engineering script for BIXI demand forecasting.
+"""Feature engineering for BIXI 15-minute demand forecasting.
 
-The script reads demand and weather data from S3, creates temporal features, 
-leakage-aware historical baseline features, merges weather features, 
-and writes the final feature tables back to S3.
+Reads the cleaned 15-minute demand tables (produced by
+:mod:`bixi.demand_ingestion_cleaning`) plus the Open-Meteo weather CSVs, builds
+model-ready features, and writes the leakage-safe feature tables the modeling
+pipeline consumes:
+
+    s3://<DATA_BUCKET>/<DATA_PREFIX>/{2024,2025_may,2025_oct}_{departure,arrival}_features.parquet
+
+Features per row (== :data:`bixi.config.EXPECTED_COLUMNS`):
+  * geo:        latitude, longitude
+  * temporal:   dayofweek, month, slot_sin, slot_cos (cyclical 15-min slot)
+  * baselines:  hist_avg_demand, baseline_prev_15min, baseline_prev_1h,
+                baseline_yesterday_same_slot — all built from the **2024** profile
+                only, with **leave-one-out** on the 2024 training rows so a row's
+                own demand never leaks into its baseline.
+  * weather:    temperature_2m, precipitation, wind_speed_10m,
+                relative_humidity_2m, weather_code
+
+Uses the shared :mod:`bixi.config` / :mod:`bixi.io` helpers (default boto3
+credential chain) — no hard-coded bucket, no extra runtime dependencies. Wired
+into the pipeline as the ``features`` stage; also runnable standalone with
+``python -m bixi.feature_engineering``.
 """
 
 from __future__ import annotations
 
-import io
+import io as _io
 import os
 import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
-import boto3
 import numpy as np
 import pandas as pd
-from dotenv import load_dotenv
 
-load_dotenv()
+from . import config, io
 
-
-BUCKET = "insy684"
 TIME_FREQ = "15min"
 SLOTS_PER_DAY = 96
 SLOTS_PER_WEEK = 7 * SLOTS_PER_DAY
+
+# Weather CSV filenames per period (note: hyphenated, unlike the demand stems).
+WEATHER_FILES = {
+    "2024": "2024_weather_15min.csv",
+    "2025_may": "2025-may_weather_15min.csv",
+    "2025_oct": "2025-oct_weather_15min.csv",
+}
+
+# Period -> (year_label, use_leave_one_out). 2024 = training (LOO); 2025 = eval.
+PERIODS = [("2024", True), ("2025_may", False), ("2025_oct", False)]
+_LABEL_TO_SPLIT = {"2024": "train", "2025_may": "val", "2025_oct": "test"}
 
 
 @dataclass(frozen=True)
@@ -51,43 +75,52 @@ def log(message: str) -> None:
     print(message, flush=True)
 
 
-def read_csv_from_s3(s3_client, bucket: str, key: str) -> pd.DataFrame:
-    obj = s3_client.get_object(Bucket=bucket, Key=key)
-    return pd.read_csv(io.BytesIO(obj["Body"].read()))
+# --------------------------------------------------------------------------- #
+# S3 key helpers
+# --------------------------------------------------------------------------- #
+def demand_key(year_label: str, target: str) -> str:
+    return f"{config.DATA_PREFIX}/{year_label}_{target}_demand_15min.csv"
 
 
-def write_parquet_to_s3(s3_client, df: pd.DataFrame, bucket: str, key: str) -> None:
-    """
-    Write a large DataFrame to S3 as Parquet without keeping the full output in memory.
-    """
+def weather_key(year_label: str) -> str:
+    return f"{config.WEATHER_PREFIX}/{WEATHER_FILES[year_label]}"
+
+
+def output_key(year_label: str, target: str) -> str:
+    """Output stem == ``config.split_specs`` file stem, kept in sync."""
+    stem = config.split_specs(target)[_LABEL_TO_SPLIT[year_label]].file_stem
+    return f"{config.DATA_PREFIX}/{stem}.parquet"
+
+
+# --------------------------------------------------------------------------- #
+# S3 I/O (via bixi.io)
+# --------------------------------------------------------------------------- #
+def read_csv_from_s3(key: str) -> pd.DataFrame:
+    return pd.read_csv(_io.BytesIO(io.get_bytes(key, bucket=config.DATA_BUCKET)))
+
+
+def write_parquet_to_s3(df: pd.DataFrame, key: str) -> None:
+    """Write a DataFrame to S3 as Parquet via a temp file (memory-friendly)."""
     temp_dir = Path(os.getenv("BIXI_TEMP_DIR", tempfile.gettempdir()))
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     local_path: Path | None = None
-
     try:
-        with tempfile.NamedTemporaryFile(
-            suffix=".parquet",
-            dir=temp_dir,
-            delete=False,
-        ) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", dir=temp_dir, delete=False) as tmp:
             local_path = Path(tmp.name)
-
         df.to_parquet(local_path, index=False)
-        s3_client.upload_file(str(local_path), bucket, key)
-        log(f"Saved s3://{bucket}/{key} | shape={df.shape}")
-
+        io.upload_file(str(local_path), key, bucket=config.DATA_BUCKET)
+        log(f"Saved s3://{config.DATA_BUCKET}/{key} | shape={df.shape}")
     finally:
         if local_path is not None and local_path.exists():
             local_path.unlink()
 
 
+# --------------------------------------------------------------------------- #
+# Grid completion + temporal features
+# --------------------------------------------------------------------------- #
 def complete_station_time_grid(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Complete the station x 15-minute demand grid.
-
-    Missing station-time demand values are filled with 0.
-    """
+    """Complete the station x 15-minute grid; missing demand -> 0."""
     df = df.copy()
     df["time_15min"] = pd.to_datetime(df["time_15min"])
 
@@ -128,12 +161,8 @@ def complete_station_time_grid(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Add model-ready calendar and cyclical time features.
-
-    slot_of_day is kept only as a temporary key for baseline construction
-    and is removed from the final output.
-    """
+    """Add calendar + cyclical time features. ``slot_of_day`` is a temporary key
+    for baseline construction and is removed from the final output."""
     df = df.copy()
     df["time_15min"] = pd.to_datetime(df["time_15min"])
 
@@ -148,14 +177,17 @@ def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def load_prepare_demand(s3_client, bucket: str, key: str) -> pd.DataFrame:
-    df = read_csv_from_s3(s3_client, bucket, key)
+def load_prepare_demand(key: str) -> pd.DataFrame:
+    df = read_csv_from_s3(key)
     df = complete_station_time_grid(df)
     return add_time_features(df)
 
 
+# --------------------------------------------------------------------------- #
+# Leakage-safe 2024 profile baselines
+# --------------------------------------------------------------------------- #
 def build_profile_stats(baseline_df: pd.DataFrame) -> ProfileStats:
-    """Precompute 2024 profile statistics once and reuse them for all baseline features."""
+    """Precompute 2024 profile statistics once and reuse them for all baselines."""
     primary = (
         baseline_df.groupby(["station_name", "dayofweek", "slot_of_day"], as_index=False)
         .agg(primary_sum=("demand", "sum"), primary_count=("demand", "count"))
@@ -180,14 +212,9 @@ def build_profile_stats(baseline_df: pd.DataFrame) -> ProfileStats:
     )
 
 
-def add_shifted_lookup_keys(
-    df: pd.DataFrame,
-    slots_back: int,
-    dow_col: str,
-    slot_col: str,
-) -> pd.DataFrame:
-    """
-    Create weekly lookup keys for profile-based historical features.
+def add_shifted_lookup_keys(df: pd.DataFrame, slots_back: int,
+                            dow_col: str, slot_col: str) -> pd.DataFrame:
+    """Create weekly lookup keys for profile-based historical features.
 
     slots_back=0: current same day-of-week and slot
     slots_back=1: previous 15-minute slot
@@ -206,19 +233,11 @@ def add_shifted_lookup_keys(
     return df
 
 
-def mean_with_optional_leave_one_out(
-    total: pd.Series,
-    count: pd.Series,
-    current_demand: pd.Series,
-    include_current: pd.Series,
-    use_leave_one_out: bool,
-) -> pd.Series:
-    """
-    Calculate a mean from precomputed group sums and counts.
-
-    When use_leave_one_out=True, subtract the current row's demand from the
-    group only when the current row belongs to that fallback group.
-    """
+def mean_with_optional_leave_one_out(total: pd.Series, count: pd.Series,
+                                     current_demand: pd.Series, include_current: pd.Series,
+                                     use_leave_one_out: bool) -> pd.Series:
+    """Mean from precomputed group sums/counts. When ``use_leave_one_out``,
+    subtract the current row's demand from any fallback group containing it."""
     adjusted_total = total
     adjusted_count = count
 
@@ -230,40 +249,22 @@ def mean_with_optional_leave_one_out(
     return adjusted_total / adjusted_count
 
 
-def merge_profile_feature(
-    target_df: pd.DataFrame,
-    profile_stats: ProfileStats,
-    feature_name: str,
-    source_dow_col: str,
-    source_slot_col: str,
-    use_leave_one_out: bool,
-) -> pd.DataFrame:
-    """
-    Merge one 2024 profile-based baseline feature.
+def merge_profile_feature(target_df: pd.DataFrame, profile_stats: ProfileStats,
+                          feature_name: str, source_dow_col: str, source_slot_col: str,
+                          use_leave_one_out: bool) -> pd.DataFrame:
+    """Merge one 2024 profile-based baseline feature.
 
-    Fallback order:
-    1. station_name + dayofweek + slot_of_day
-    2. station_name + slot_of_day
-    3. station_name
-    4. global mean
-    5. 0
-
-    For 2024 training samples, use_leave_one_out=True removes each row's own
-    demand from any fallback group that contains that row. For 2025 validation
-    and test samples, use_leave_one_out=False uses the complete 2024 profile.
+    Fallback order: station+dow+slot -> station+slot -> station -> global -> 0.
+    For 2024 training rows ``use_leave_one_out=True`` removes each row's own demand
+    from any fallback group containing it; 2025 rows use the full 2024 profile.
     """
     target = target_df
 
     primary_stats = profile_stats.primary.rename(
-        columns={
-            "dayofweek": source_dow_col,
-            "slot_of_day": source_slot_col,
-        }
+        columns={"dayofweek": source_dow_col, "slot_of_day": source_slot_col}
     )
     target = target.merge(
-        primary_stats,
-        on=["station_name", source_dow_col, source_slot_col],
-        how="left",
+        primary_stats, on=["station_name", source_dow_col, source_slot_col], how="left"
     )
 
     current_in_primary = (
@@ -271,48 +272,35 @@ def merge_profile_feature(
         & target["slot_of_day"].eq(target[source_slot_col])
     )
     target[feature_name] = mean_with_optional_leave_one_out(
-        total=target["primary_sum"],
-        count=target["primary_count"],
-        current_demand=target["demand"],
-        include_current=current_in_primary,
+        total=target["primary_sum"], count=target["primary_count"],
+        current_demand=target["demand"], include_current=current_in_primary,
         use_leave_one_out=use_leave_one_out,
     )
-
     target = target.drop(columns=["primary_sum", "primary_count"], errors="ignore")
 
     station_slot_stats = profile_stats.station_slot.rename(
         columns={"slot_of_day": source_slot_col}
     )
-    target = target.merge(
-        station_slot_stats,
-        on=["station_name", source_slot_col],
-        how="left",
-    )
+    target = target.merge(station_slot_stats, on=["station_name", source_slot_col], how="left")
 
     current_in_station_slot = target["slot_of_day"].eq(target[source_slot_col])
     station_slot_mean = mean_with_optional_leave_one_out(
-        total=target["station_slot_sum"],
-        count=target["station_slot_count"],
-        current_demand=target["demand"],
-        include_current=current_in_station_slot,
+        total=target["station_slot_sum"], count=target["station_slot_count"],
+        current_demand=target["demand"], include_current=current_in_station_slot,
         use_leave_one_out=use_leave_one_out,
     )
     target[feature_name] = target[feature_name].fillna(station_slot_mean)
-
     target = target.drop(columns=["station_slot_sum", "station_slot_count"], errors="ignore")
 
     target = target.merge(profile_stats.station, on="station_name", how="left")
 
     current_in_station = target["station_count"].notna()
     station_mean = mean_with_optional_leave_one_out(
-        total=target["station_sum"],
-        count=target["station_count"],
-        current_demand=target["demand"],
-        include_current=current_in_station,
+        total=target["station_sum"], count=target["station_count"],
+        current_demand=target["demand"], include_current=current_in_station,
         use_leave_one_out=use_leave_one_out,
     )
     target[feature_name] = target[feature_name].fillna(station_mean)
-
     target = target.drop(columns=["station_sum", "station_count"], errors="ignore")
 
     if use_leave_one_out and profile_stats.global_count > 1:
@@ -323,18 +311,12 @@ def merge_profile_feature(
         global_mean = pd.Series(np.nan, index=target.index)
 
     target[feature_name] = target[feature_name].fillna(global_mean).fillna(0).astype("float32")
-
     return target
 
 
-def add_profile_baseline_features(
-    df: pd.DataFrame,
-    profile_stats: ProfileStats,
-    use_leave_one_out: bool,
-) -> pd.DataFrame:
-    """
-    Add all profile-based historical demand features.
-    """
+def add_profile_baseline_features(df: pd.DataFrame, profile_stats: ProfileStats,
+                                  use_leave_one_out: bool) -> pd.DataFrame:
+    """Add all profile-based historical demand features."""
     feature_specs = [
         ("hist_avg_demand", 0, "_hist_dow", "_hist_slot"),
         ("baseline_prev_15min", 1, "_prev15_dow", "_prev15_slot"),
@@ -343,16 +325,12 @@ def add_profile_baseline_features(
     ]
 
     temp_cols: list[str] = []
-
     for feature_name, slots_back, dow_col, slot_col in feature_specs:
         log(f"  Adding {feature_name}...")
         df = add_shifted_lookup_keys(df, slots_back, dow_col, slot_col)
         df = merge_profile_feature(
-            target_df=df,
-            profile_stats=profile_stats,
-            feature_name=feature_name,
-            source_dow_col=dow_col,
-            source_slot_col=slot_col,
+            target_df=df, profile_stats=profile_stats, feature_name=feature_name,
+            source_dow_col=dow_col, source_slot_col=slot_col,
             use_leave_one_out=use_leave_one_out,
         )
         temp_cols.extend([dow_col, slot_col])
@@ -361,22 +339,17 @@ def add_profile_baseline_features(
     return df.drop(columns=temp_cols, errors="ignore")
 
 
-def prepare_weather(
-    weather_df: pd.DataFrame,
-    start_time: pd.Timestamp,
-    end_time: pd.Timestamp,
-) -> pd.DataFrame:
-    """
-    Sort weather data, complete it to a 15-minute grid, and forward-fill
-    missing values. All weather columns are preserved.
-    """
+# --------------------------------------------------------------------------- #
+# Weather merge + finalize
+# --------------------------------------------------------------------------- #
+def prepare_weather(weather_df: pd.DataFrame, start_time: pd.Timestamp,
+                    end_time: pd.Timestamp) -> pd.DataFrame:
+    """Sort weather, complete to a 15-minute grid, and forward-fill gaps."""
     weather = weather_df.copy()
     weather["time"] = pd.to_datetime(weather["time"])
 
     weather = (
-        weather.sort_values("time")
-        .drop_duplicates(subset=["time"])
-        .set_index("time")
+        weather.sort_values("time").drop_duplicates(subset=["time"]).set_index("time")
     )
 
     full_times = pd.date_range(start=start_time, end=end_time, freq=TIME_FREQ)
@@ -386,159 +359,97 @@ def prepare_weather(
     return weather.reset_index()
 
 
-def merge_weather(
-    s3_client,
-    df: pd.DataFrame,
-    bucket: str,
-    weather_key: str,
-) -> pd.DataFrame:
-    weather = read_csv_from_s3(s3_client, bucket, weather_key)
+def merge_weather(df: pd.DataFrame, weather_s3_key: str) -> pd.DataFrame:
+    weather = read_csv_from_s3(weather_s3_key)
     weather = prepare_weather(
-        weather_df=weather,
-        start_time=df["time_15min"].min(),
-        end_time=df["time_15min"].max(),
+        weather_df=weather, start_time=df["time_15min"].min(), end_time=df["time_15min"].max()
     )
-
     return df.merge(weather, left_on="time_15min", right_on="time", how="left").drop(
-        columns=["time"],
-        errors="ignore",
+        columns=["time"], errors="ignore"
     )
 
 
 def finalize_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove temporary feature-construction columns from the final output."""
-    return df.drop(columns=["slot_of_day"], errors="ignore")
+    """Drop temporary construction columns and enforce the column contract."""
+    df = df.drop(columns=["slot_of_day"], errors="ignore")
+    # Select + order exactly the columns the modeling pipeline expects; raises if
+    # any are missing (a strong schema guard before writing to S3).
+    return df[list(config.EXPECTED_COLUMNS)]
 
 
-def run_feature_job(
-    s3_client,
-    bucket: str,
-    job: FeatureJob,
-    profile_stats: ProfileStats,
-    prepared_target_df: pd.DataFrame | None = None,
-) -> pd.DataFrame:
+# --------------------------------------------------------------------------- #
+# Job runner + per-target / all-target builders
+# --------------------------------------------------------------------------- #
+def run_feature_job(job: FeatureJob, profile_stats: ProfileStats,
+                    prepared_target_df: pd.DataFrame | None = None) -> pd.DataFrame:
     start = time.perf_counter()
     log(f"\nProcessing {job.demand_key}")
 
-    if prepared_target_df is None:
-        df = load_prepare_demand(s3_client, bucket, job.demand_key)
-    else:
-        df = prepared_target_df.copy()
-
+    df = prepared_target_df.copy() if prepared_target_df is not None \
+        else load_prepare_demand(job.demand_key)
     log(f"Loaded and completed demand grid: {df.shape}")
 
-    df = add_profile_baseline_features(
-        df=df,
-        profile_stats=profile_stats,
-        use_leave_one_out=job.use_leave_one_out,
-    )
+    df = add_profile_baseline_features(df, profile_stats, job.use_leave_one_out)
     log(f"Added baseline features: {df.shape}")
 
-    df = merge_weather(s3_client, df, bucket, job.weather_key)
+    df = merge_weather(df, job.weather_key)
     log(f"Merged weather: {df.shape}")
 
     df = finalize_features(df)
     log(f"Finalized features: {df.shape}")
 
-    write_parquet_to_s3(s3_client, df, bucket, job.output_key)
+    write_parquet_to_s3(df, job.output_key)
 
     elapsed = (time.perf_counter() - start) / 60
     log(f"Finished {job.output_key} in {elapsed:.2f} minutes")
-
     return df
 
 
-def main() -> None:
-    s3_client = boto3.client("s3")
+def build_features_for_target(target: str, force: bool = False) -> list[str]:
+    """Build train/val/test feature tables for one target (departure | arrival).
 
-    log("Loading 2024 departure baseline...")
-    baseline_departure = load_prepare_demand(
-        s3_client,
-        BUCKET,
-        "processed-data/2024_departure_demand_15min.csv",
-    )
-    log(f"Loaded 2024 departure baseline: {baseline_departure.shape}")
+    The 2024 demand for this target defines the profile statistics; the 2024 table
+    is built leave-one-out, the 2025 May/Oct tables use the full 2024 profile.
+    Idempotent: a period whose output parquet already exists is skipped unless
+    ``force``.
+    """
+    if target not in config.TARGETS:
+        raise ValueError(f"target must be one of {config.TARGETS}, got {target!r}")
 
-    log("Loading 2024 arrival baseline...")
-    baseline_arrival = load_prepare_demand(
-        s3_client,
-        BUCKET,
-        "processed-data/2024_arrival_demand_15min.csv",
-    )
-    log(f"Loaded 2024 arrival baseline: {baseline_arrival.shape}")
+    log(f"\n=== features: target={target} ===")
+    log(f"Loading 2024 {target} baseline...")
+    baseline = load_prepare_demand(demand_key("2024", target))
+    stats = build_profile_stats(baseline)
+    log(f"Built {target} profile stats | baseline shape={baseline.shape}")
 
-    log("Building departure profile stats...")
-    departure_stats = build_profile_stats(baseline_departure)
-    log("Built departure profile stats.")
-
-    log("Building arrival profile stats...")
-    arrival_stats = build_profile_stats(baseline_arrival)
-    log("Built arrival profile stats.")
-
-    baseline_data = {
-        "departure": baseline_departure,
-        "arrival": baseline_arrival,
-    }
-
-    profile_stats = {
-        "departure": departure_stats,
-        "arrival": arrival_stats,
-    }
-
-    jobs = [
-        FeatureJob(
-            demand_key="processed-data/2024_departure_demand_15min.csv",
-            weather_key="weather-data/2024_weather_15min.csv",
-            output_key="processed-data/2024_departure_features.parquet",
-            baseline_type="departure",
-            use_leave_one_out=True,
-        ),
-        FeatureJob(
-            demand_key="processed-data/2024_arrival_demand_15min.csv",
-            weather_key="weather-data/2024_weather_15min.csv",
-            output_key="processed-data/2024_arrival_features.parquet",
-            baseline_type="arrival",
-            use_leave_one_out=True,
-        ),
-        FeatureJob(
-            demand_key="processed-data/2025_may_departure_demand_15min.csv",
-            weather_key="weather-data/2025-may_weather_15min.csv",
-            output_key="processed-data/2025_may_departure_features.parquet",
-            baseline_type="departure",
-            use_leave_one_out=False,
-        ),
-        FeatureJob(
-            demand_key="processed-data/2025_may_arrival_demand_15min.csv",
-            weather_key="weather-data/2025-may_weather_15min.csv",
-            output_key="processed-data/2025_may_arrival_features.parquet",
-            baseline_type="arrival",
-            use_leave_one_out=False,
-        ),
-        FeatureJob(
-            demand_key="processed-data/2025_oct_departure_demand_15min.csv",
-            weather_key="weather-data/2025-oct_weather_15min.csv",
-            output_key="processed-data/2025_oct_departure_features.parquet",
-            baseline_type="departure",
-            use_leave_one_out=False,
-        ),
-        FeatureJob(
-            demand_key="processed-data/2025_oct_arrival_demand_15min.csv",
-            weather_key="weather-data/2025-oct_weather_15min.csv",
-            output_key="processed-data/2025_oct_arrival_features.parquet",
-            baseline_type="arrival",
-            use_leave_one_out=False,
-        ),
-    ]
-
-    for job in jobs:
-        prepared_target_df = baseline_data[job.baseline_type] if job.use_leave_one_out else None
-        run_feature_job(
-            s3_client=s3_client,
-            bucket=BUCKET,
-            job=job,
-            profile_stats=profile_stats[job.baseline_type],
-            prepared_target_df=prepared_target_df,
+    written: list[str] = []
+    for year_label, use_loo in PERIODS:
+        out_key = output_key(year_label, target)
+        if io.exists(out_key, bucket=config.DATA_BUCKET) and not force:
+            log(f"[features] {out_key} already in S3 — skip.")
+            continue
+        job = FeatureJob(
+            demand_key=demand_key(year_label, target),
+            weather_key=weather_key(year_label),
+            output_key=out_key,
+            baseline_type=target,
+            use_leave_one_out=use_loo,
         )
+        run_feature_job(job, stats, prepared_target_df=baseline if use_loo else None)
+        written.append(out_key)
+    return written
+
+
+def build_all_features(force: bool = False) -> list[str]:
+    written: list[str] = []
+    for target in config.TARGETS:
+        written += build_features_for_target(target, force=force)
+    return written
+
+
+def main(force: bool = False) -> None:
+    build_all_features(force=force)
+    log("\nFeature engineering complete.")
 
 
 if __name__ == "__main__":
