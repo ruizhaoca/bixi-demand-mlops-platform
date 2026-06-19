@@ -1,0 +1,224 @@
+\documentclass[11pt]{article}
+
+% Speaker notes for "The Bixi Crew" final presentation.
+% Build:  tectonic docs/presentation/speaker_notes.tex
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{amssymb}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{bixired}{HTML}{B91C1C}
+\definecolor{ink}{HTML}{111827}
+\definecolor{slate}{HTML}{374151}
+\definecolor{teal}{HTML}{0F766E}
+\definecolor{amber}{HTML}{B45309}
+\definecolor{blue}{HTML}{1D4ED8}
+\definecolor{purple}{HTML}{6D28D9}
+
+\newcommand{\arr}{$\rightarrow$}
+\newcommand{\x}{$\times$}
+\newcommand{\Rtwo}{$R^2$}
+
+\setlist[itemize]{leftmargin=1.4em, itemsep=2pt, topsep=2pt}
+\titleformat{\section}{\Large\bfseries\color{bixired}}{}{0em}{}
+\titleformat{\subsection}{\large\bfseries\color{ink}}{}{0em}{}
+\titlespacing*{\section}{0pt}{14pt}{6pt}
+\titlespacing*{\subsection}{0pt}{10pt}{3pt}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\lhead{\small\color{slate}The Bixi Crew --- BIXI Demand MLOps Platform}
+\rhead{\small\color{slate}Speaker notes}
+\cfoot{\small\color{slate}\thepage}
+
+\newcommand{\presenter}[2]{\par\medskip\noindent{\color{#2}\rule{3pt}{12pt}}\hspace{4pt}{\bfseries #1}\par}
+\newcommand{\timing}[1]{\hfill{\small\itshape\color{slate}(#1)}}
+
+\begin{document}
+
+% ---------------------------------------------------------------- Title
+\begin{titlepage}
+\centering
+\vspace*{2.2cm}
+{\color{bixired}\Huge\bfseries The Bixi Crew}\\[6pt]
+{\color{slate}\Large Speaker notes --- final presentation}\\[10pt]
+\rule{0.7\linewidth}{1pt}\\[14pt]
+{\LARGE\bfseries BIXI Demand MLOps Platform}\\[8pt]
+{\large 15-minute demand forecasting for every Montreal station,\\[2pt]
+departures \& arrivals, productionised on AWS}\\[26pt]
+
+\begin{tabular}{ll}
+\bfseries Othmane Zizi & \texttt{othmane-zizi-pro}\\[3pt]
+\bfseries Sarah Liu & \texttt{sarahliu-mma}\\[3pt]
+\bfseries Ruihe ``Louis'' Zhang & \texttt{Mudkipython}\\[3pt]
+\bfseries Rui Zhao & \texttt{ruizhaoca}\\
+\end{tabular}\\[26pt]
+
+\begin{tabular}{ll}
+\bfseries Repository & \texttt{github.com/ruizhaoca/bixi-demand-mlops-platform}\\[3pt]
+\bfseries Live demo & \texttt{bixidemandlocal.streamlit.app}\\[3pt]
+\bfseries Live demo (EC2) & \texttt{3.16.250.166:8501}\\
+\end{tabular}\\[26pt]
+
+{\small\color{slate}Target: 7--8 minutes, four presenters, $\approx$1.5--2 min each.
+Notes follow the deck slide order; the same notes are in the PPTX notes pane.}
+\end{titlepage}
+
+% ---------------------------------------------------------------- Sarah
+\section{Sarah Liu --- introduction \& data \timing{$\approx$2:00}}
+\presenter{Slide 0 --- Title (shared open, Sarah leads)}{bixired}
+\begin{itemize}
+  \item ``We are \textbf{The Bixi Crew}. We forecast 15-minute BIXI demand for every Montreal
+        station, separately for departures and arrivals, and turn it into a rebalancing tool ---
+        productionised end-to-end on AWS.''
+  \item Hand off the structure: Sarah (problem + data), Louis (AWS structure), Othmane (modelling),
+        Rui (rebalancing + live app). Repo and two live demos are on screen.
+\end{itemize}
+
+\presenter{Slide 1 --- The rebalancing problem \& why our design fits}{teal}
+\begin{itemize}
+  \item BIXI has $\sim$1,100+ stations; bikes pile up downtown and run out in residential areas, so
+        riders hit empty or full docks.
+  \item Operators rebalance by truck but need foresight at \emph{operational} resolution. The
+        course-1 prototype was hourly and only the top $\sim$400 stations --- too coarse and partial.
+  \item Four deliberate choices: \textbf{15-minute} (4\x{} finer), \textbf{departures vs arrivals}
+        separately (their gap is the signal), \textbf{all stations}, and \textbf{leakage-safe \&
+        productionised}.
+\end{itemize}
+
+\presenter{Slide 2 --- Data: sources, cleaning, and what demand looks like}{teal}
+\begin{itemize}
+  \item Sources: BIXI open-data trips (2024 + May/Oct 2025) joined to Open-Meteo 15-minute weather.
+  \item Cleaned into a tidy 15-minute station-demand table, split into departures and arrivals.
+  \item Heatmap = average demand by weekday \x{} 15-minute slot: quiet overnight, building through
+        midday, busiest on weekday evenings --- exactly the structure our time features capture.
+\end{itemize}
+
+\presenter{Slide 3 --- Feature engineering, leakage-safe}{teal}
+\begin{itemize}
+  \item Cyclical slot-of-day / day-of-week / month; 2024 historical baselines (average + recent-lag)
+        built \textbf{leave-one-out}; 15-minute weather; frequency + smoothed \textbf{target encoding}
+        of the station name.
+  \item Leakage-safe: strict temporal split --- train 2024, validate May-2025, test Oct-2025 ---
+        with encoders and baselines fit on \textbf{train only} and applied forward. ``Over to Louis.''
+\end{itemize}
+
+% ---------------------------------------------------------------- Louis
+\section{Ruihe ``Louis'' Zhang --- AWS \& productionised structure \timing{$\approx$1:45}}
+\presenter{Slide 4 --- Architecture, all infrastructure-as-code}{amber}
+\begin{itemize}
+  \item Push to GitHub \arr{} Actions CI runs \texttt{pytest} and builds both Docker images.
+  \item AWS in \texttt{us-east-2} is provisioned entirely by \textbf{AWS CDK} in four stacks:
+        \texttt{BixiNetwork} (VPC), \texttt{BixiStorage} (S3 + SSM), \texttt{BixiMlflow}
+        (MLflow on EC2 + S3), \texttt{BixiBatch} (ECR + AWS Batch).
+  \item AWS Batch runs \texttt{python -m bixi.pipeline} over the full dataset from \texttt{s3://insy684};
+        serving is two Streamlit deployments (Community Cloud + EC2). No credentials in git ---
+        default boto3 chain (SSO locally, IAM role in cloud).
+\end{itemize}
+
+\presenter{Slide 5 --- Resumable, staged pipeline}{amber}
+\begin{itemize}
+  \item Eight ordered stages: ingest \arr{} features \arr{} data \arr{} train \arr{} explain \arr{}
+        fairness \arr{} drift \arr{} register.
+  \item Each stage writes a \texttt{\_SUCCESS} marker to S3 --- a run resumes from any step. Default
+        run starts at \texttt{data} (cleaned data already in S3); full rebuild starts at \texttt{ingest}.
+  \item Identical code local vs AWS Batch; CI smoke-tests the pipeline image with no AWS.
+\end{itemize}
+
+\presenter{Slide 6 --- Repository structure}{amber}
+\begin{itemize}
+  \item Single-responsibility modules in \texttt{src/bixi}, each owning one stage of the contract in
+        \texttt{config.py}.
+  \item Config-driven: env vars flip local subsample $\leftrightarrow$ full cloud run with the same code.
+        \texttt{infra/} is the CDK app; \texttt{docker/} pins the runtime; \texttt{tests/} runs on
+        synthetic data. ``Othmane takes the modelling.''
+\end{itemize}
+
+% ---------------------------------------------------------------- Othmane
+\section{Othmane Zizi --- predictive modelling \timing{$\approx$2:00}}
+\presenter{Slide 7 --- Modelling: a multi-model search, auto-selected}{blue}
+\begin{itemize}
+  \item Not a hand-picked model: LightGBM + XGBoost baselines, \textbf{FLAML} AutoML, and \textbf{Optuna}
+        Bayesian HPO, every trial logged to MLflow.
+  \item Best by validation RMSE is selected and promoted automatically. Run once per target; both
+        independently land on \texttt{lgbm\_optuna} --- a consistent, reproducible winner.
+\end{itemize}
+
+\presenter{Slide 8 --- MLflow tracking + registry}{blue}
+\begin{itemize}
+  \item Tracking server on EC2 with an S3 artifact store. Departure experiment = 73 runs, arrival = 57
+        --- every candidate, FLAML and Optuna trial with params, metrics, model.
+  \item Best run per target is registered and promoted to the \textbf{production} alias --- the exact
+        artifact the apps serve.
+\end{itemize}
+
+\presenter{Slide 9 --- Results}{blue}
+\begin{itemize}
+  \item Per split. 15-minute slot demand is genuinely noisy (many zero slots), so absolute \Rtwo{} is
+        modest \emph{by design} --- but errors are well under \textbf{one trip per slot}.
+  \item Beats a naive baseline on RMSE and \Rtwo{}, stable across two unseen months (no overfitting),
+        and strongest exactly where it matters --- busy stations.
+\end{itemize}
+
+\presenter{Slide 10 --- Explainability: SHAP \& LIME}{blue}
+\begin{itemize}
+  \item SHAP beeswarms: most signal from the 2024 historical baselines and cyclical time-of-day, with
+        weather secondary --- same sensible story for departures and arrivals.
+  \item LIME force plots explain individual predictions on demand.
+\end{itemize}
+
+\presenter{Slide 11 --- Fairness \& four-type drift}{blue}
+\begin{itemize}
+  \item Fairness: error parity (RMSE/MAE) across demand tiers and geography --- accuracy concentrates
+        in high-demand stations, low-tier \Rtwo{} near zero; surfaced so operators don't over-trust
+        quiet-station forecasts.
+  \item All four Evidently drift types --- feature, target, prediction, concept --- on Oct-2025 data.
+        ``Over to Rui.''
+\end{itemize}
+
+% ---------------------------------------------------------------- Rui
+\section{Rui Zhao --- rebalancing, live app \& close \timing{$\approx$2:00}}
+\presenter{Slide 12 --- Net-flow rebalancing layer}{purple}
+\begin{itemize}
+  \item \texttt{net\_flow = arrival $-$ departure} per station per slot; cumulate across the day for a
+        relative occupancy trajectory.
+  \item Read peak \textbf{deficit} (needs bikes / stockout) and peak \textbf{surplus} (needs docks /
+        overflow), rank by severity. Map: downtown core fills (needs docks); residential periphery
+        drains (needs bikes).
+\end{itemize}
+
+\presenter{Slide 13 --- The Streamlit app (live demo)}{purple}
+\begin{itemize}
+  \item One shared UI, four pages: multi-day 15-minute forecast; rebalancing map + ranked list +
+        per-station trajectory; custom what-if inputs; model monitoring (SHAP, fairness, drift).
+  \item Runs on Community Cloud (committed artifacts, no AWS at runtime) and an EC2 container backed by
+        S3. \textbf{Switch to the live app and click through the pages.}
+\end{itemize}
+
+\presenter{Slide 14 --- Meaning, limitations, conclusion}{purple}
+\begin{itemize}
+  \item Value: a daily ranked list of where to send a rebalancing truck first.
+  \item Honest limitation: no dock capacity / real-time occupancy in the trip data, so the trajectory
+        starts from a common zero --- a \textbf{relative} ranking, not exact stockout times.
+  \item MLOps maturity: tracking, registry, explainability, fairness, 4-type drift, CI, Docker, CDK ---
+        end to end. Next: live station-status feed for absolute occupancy; drift-triggered retrains.
+\end{itemize}
+
+\presenter{Slide 15 --- Thank you / Q\&A (shared close)}{bixired}
+\begin{itemize}
+  \item ``Thank you --- happy to take questions and walk through the live app.'' Repo and both live
+        demos on screen; the team is The Bixi Crew: Othmane, Sarah, Louis, Rui.
+\end{itemize}
+
+\vfill
+\noindent{\small\color{slate}\hrulefill\\[4pt]
+Timing guide: keep each presenter to $\approx$1.5--2 minutes; the live demo (Slide 13) is the natural
+place to absorb slack or recover time. Total target 7--8 minutes.}
+
+\end{document}
