@@ -1,0 +1,30 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app/src
+ENV AWS_DEFAULT_REGION=us-east-2
+# App Runner overrides this to "s3"; "local" keeps the baked bundle as a fallback.
+ENV BIXI_SERVING_MODE=local
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-api.txt .
+RUN pip install --no-cache-dir -r requirements-api.txt
+
+COPY src/ ./src/
+COPY api/ ./api/
+# Bake the ~9 MB local artifact bundle so `local` mode works in-container without
+# any AWS access (CI smoke test + fallback). App Runner runs `s3` mode instead.
+COPY artifacts/streamlit-community-cloud/ ./artifacts/streamlit-community-cloud/
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -fsS http://localhost:8000/health || exit 1
+
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

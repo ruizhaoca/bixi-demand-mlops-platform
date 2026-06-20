@@ -51,15 +51,17 @@ AWS (us-east-2), provisioned by AWS CDK (infra/):
   BixiStorage  S3 pipeline bucket (checkpoints / artifacts / reports) + SSM param
   BixiMlflow   MLflow tracking server on EC2 + S3 artifact store
   BixiBatch    ECR training image + AWS Batch compute + job definition
+  BixiServe    FastAPI /predict service on App Runner (ECR image, no VPC)
 
   AWS Batch runs `python -m bixi.pipeline` (docker/Dockerfile.train) over the full
   dataset, reading source data from s3://insy684 and writing checkpoints, models,
   explainability/fairness/drift artifacts to the CDK pipeline bucket; runs + models
   are tracked in MLflow.
 
-Serving:
-  app.py      Streamlit Community Cloud — committed artifacts (no AWS at runtime)
-  app_ec2.py  EC2 Streamlit container — loads the same artifacts from S3
+Serving (three tiers, one shared model bundle):
+  app.py        Streamlit Community Cloud — committed artifacts (no AWS at runtime)
+  app_ec2.py    EC2 Streamlit container — loads the same artifacts from S3
+  api/main.py   FastAPI REST API on App Runner — /predict over the same bundle
 ```
 
 The pipeline is **staged and resumable**. Each stage writes a `_SUCCESS` marker to
@@ -106,18 +108,21 @@ at `data`** because the cleaned data and feature tables already live in S3.
 │   └── streamlit_s3_serving.py     # S3-backed serving helpers (EC2)
 ├── app.py                          # Streamlit app (Community Cloud, packaged artifacts)
 ├── app_ec2.py                      # Streamlit entrypoint (EC2 + S3 artifacts)
+├── api/main.py                     # FastAPI /predict service (App Runner serving tier)
 ├── artifacts/streamlit-community-cloud/cloud-2024/   # committed serving artifacts
 ├── docker/
 │   ├── Dockerfile.train            # AWS Batch / local training & pipeline image
-│   └── Dockerfile.streamlit_ec2    # EC2 Streamlit serving image
+│   ├── Dockerfile.streamlit_ec2    # EC2 Streamlit serving image
+│   └── Dockerfile.api              # FastAPI serving image (App Runner)
 ├── infra/                          # AWS CDK app
-│   ├── app.py                      # BixiNetwork / BixiStorage / BixiMlflow / BixiBatch
-│   └── bixi_infra/                 # network_stack / storage_stack / mlflow_stack / batch_stack
+│   ├── app.py                      # BixiNetwork / BixiStorage / BixiMlflow / BixiBatch / BixiServe
+│   └── bixi_infra/                 # network / storage / mlflow / batch / serve stacks
 ├── scripts/                        # deploy_infra.sh, run_pipeline.sh, teardown.sh, ...
 ├── docs/                           # design + ops guides (+ presentation assets)
 ├── notebooks/02_modeling_drift.ipynb
 ├── tests/                          # pytest suite (synthetic data, no network)
 ├── requirements.txt                # Streamlit serving deps
+├── requirements-api.txt            # FastAPI serving deps
 ├── requirements-train.txt          # pipeline / training deps
 └── runtime.txt                     # Python 3.12
 ```
@@ -257,6 +262,39 @@ occupancy trajectory), custom-input single predictions, and a model-monitoring p
 
 ---
 
+## Prediction API (FastAPI · App Runner)
+
+The third serving tier is a thin **FastAPI** REST service (`api/main.py`) over the
+**same** model bundles as the Streamlit apps — `build_feature_row` + `predict_one`,
+no new ML logic, so predictions match across every surface. It is containerized via
+`docker/Dockerfile.api` and provisioned on **AWS App Runner** by the `BixiServe` CDK
+stack (`infra/bixi_infra/serve_stack.py`).
+
+Serving mode is chosen at startup by `BIXI_SERVING_MODE`: `local` (default — the
+committed `artifacts/streamlit-community-cloud/cloud-2024/` bundle, no AWS) or `s3`
+(App Runner reads the bundle from S3 via the instance IAM role).
+
+```bash
+pip install -r requirements-api.txt
+uvicorn api.main:app --port 8000          # BIXI_SERVING_MODE=local by default
+curl localhost:8000/health
+curl -X POST localhost:8000/predict -H 'content-type: application/json' \
+  -d '{"station_name": "Métro Mont-Royal (Utilités publiques / Rivard)",
+       "timestamp": "2025-06-15T08:30:00", "target": "both"}'
+```
+
+| Method & path | Purpose |
+|---|---|
+| `GET /health` | Liveness (App Runner health check) — status, mode, targets |
+| `GET /stations` | Station names available across both targets |
+| `GET /info` | Per-target eval metrics + registered production model |
+| `POST /predict` | Departure/arrival demand for a station at a timestamp (+ optional weather) |
+
+Unknown station/baseline → `404`; invalid body → `422` (pydantic). Deploy is the
+gated step `cdk deploy BixiServe` (SSO creds) — see below.
+
+---
+
 ## Docker
 
 ```bash
@@ -266,6 +304,10 @@ docker run --rm bixi-pipeline --help
 
 # EC2 Streamlit serving image
 docker build -f docker/Dockerfile.streamlit_ec2 -t bixi-streamlit .
+
+# FastAPI prediction image (App Runner); runs local mode off the baked bundle
+docker build -f docker/Dockerfile.api -t bixi-api .
+docker run --rm -e BIXI_SERVING_MODE=local -p 8000:8000 bixi-api   # curl :8000/health
 ```
 
 ---
@@ -278,8 +320,9 @@ pytest -q tests/
 ```
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on pull requests to `main`, pushes,
-and manual dispatch: it installs deps, runs the test suite, builds **both** Docker
-images (training + Streamlit), and smoke-tests the pipeline image (`--help`, no AWS).
+and manual dispatch: it installs deps, runs the test suite, builds **all three** Docker
+images (training + Streamlit + API), smoke-tests the pipeline image (`--help`, no AWS),
+and smoke-tests the API image (local mode, `curl /health`).
 Team guide: [`docs/github_actions_guide.md`](docs/github_actions_guide.md).
 
 ---
