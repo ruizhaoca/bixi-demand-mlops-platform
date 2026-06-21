@@ -1,0 +1,13 @@
+# FastAPI prediction service (api/main.py) — App Runner serving tier.
+#
+# The model-loading subset is pinned to the SAME versions as requirements.txt so
+# the committed/​S3 model + encoder unpickle identically to the Streamlit apps.
+# streamlit/plotly are intentionally absent — the API does not render UI.
+pandas==3.0.3
+numpy==2.4.6
+pyarrow==24.0.0
+scikit-learn==1.9.0
+lightgbm==4.6.0
+boto3==1.43.33
+fastapi==0.115.*
+uvicorn[standard]==0.32.*

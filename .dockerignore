@@ -37,3 +37,9 @@ mlflow.db
 infra/cdk.out/
 infra/.venv/
 reports/
+
+# The API image (docker/Dockerfile.api) bakes the committed local serving bundle
+# so BIXI_SERVING_MODE=local works in-container. Re-include it explicitly so the
+# `*.parquet` rule above never strips its serving_baselines.parquet files.
+!artifacts/streamlit-community-cloud/
+!artifacts/streamlit-community-cloud/**
