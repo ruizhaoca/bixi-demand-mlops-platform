@@ -21,6 +21,7 @@ from aws_cdk import CfnOutput, Stack
 from aws_cdk import aws_apprunner as apprunner
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_s3 as s3
+from aws_cdk import aws_secretsmanager as secretsmanager
 from aws_cdk.aws_ecr_assets import DockerImageAsset, Platform
 from constructs import Construct
 
@@ -72,6 +73,17 @@ class ServeStack(Stack):
             )
         )
 
+        api_key_secret = secretsmanager.Secret(
+            self,
+            "ApiKey",
+            description="API key for the BIXI App Runner prediction service",
+            generate_secret_string=secretsmanager.SecretStringGenerator(
+                exclude_punctuation=True,
+                password_length=40,
+            ),
+        )
+        api_key_secret.grant_read(instance_role)
+
         runtime_env = {
             "BIXI_SERVING_MODE": "s3",
             "BIXI_RUN_ID": run_id,
@@ -99,12 +111,18 @@ class ServeStack(Stack):
                     image_configuration=apprunner.CfnService.ImageConfigurationProperty(
                         port="8000",
                         runtime_environment_variables=env_pairs,
+                        runtime_environment_secrets=[
+                            apprunner.CfnService.KeyValuePairProperty(
+                                name="BIXI_API_KEY",
+                                value=api_key_secret.secret_arn,
+                            )
+                        ],
                     ),
                 ),
             ),
             instance_configuration=apprunner.CfnService.InstanceConfigurationProperty(
-                cpu="0.25 vCPU",
-                memory="0.5 GB",
+                cpu="1 vCPU",
+                memory="2 GB",
                 instance_role_arn=instance_role.role_arn,
             ),
             health_check_configuration=apprunner.CfnService.HealthCheckConfigurationProperty(
@@ -119,3 +137,4 @@ class ServeStack(Stack):
 
         CfnOutput(self, "ApiServiceUrl", value=f"https://{service.attr_service_url}")
         CfnOutput(self, "ApiImageUri", value=image.image_uri)
+        CfnOutput(self, "ApiKeySecretArn", value=api_key_secret.secret_arn)

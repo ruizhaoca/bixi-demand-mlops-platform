@@ -94,6 +94,20 @@ def _read_csv_s3(s3_client, bucket: str, key: str) -> pd.DataFrame:
     return pd.read_csv(io.BytesIO(payload))
 
 
+def _compact_s3_baselines(baselines: pd.DataFrame) -> pd.DataFrame:
+    """Reduce repeated station strings and coordinate precision in memory."""
+    station_dtype = baselines[config.STATION_COL].dtype
+    if (
+        not isinstance(station_dtype, pd.CategoricalDtype)
+        and pd.api.types.is_string_dtype(station_dtype)
+    ):
+        baselines[config.STATION_COL] = baselines[config.STATION_COL].astype("category")
+    for column in ("latitude", "longitude"):
+        if column in baselines.columns and baselines[column].dtype == "float64":
+            baselines[column] = baselines[column].astype("float32")
+    return baselines
+
+
 def _load_target_bundle(s3_client, settings: S3ArtifactConfig, target: str) -> LocalTargetBundle:
     run_prefix = _run_prefix(settings, target)
     model = pickle.loads(
@@ -122,6 +136,7 @@ def _load_target_bundle(s3_client, settings: S3ArtifactConfig, target: str) -> L
             )
         )
     )
+    baselines = _compact_s3_baselines(baselines)
     baseline_lookup = baselines.set_index([config.STATION_COL, "dayofweek", "slot_of_day"]).sort_index()
 
     return LocalTargetBundle(

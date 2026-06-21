@@ -58,10 +58,12 @@ AWS (us-east-2), provisioned by AWS CDK (infra/):
   explainability/fairness/drift artifacts to the CDK pipeline bucket; runs + models
   are tracked in MLflow.
 
-Serving (three tiers, one shared model bundle):
-  app.py        Streamlit Community Cloud — committed artifacts (no AWS at runtime)
-  app_ec2.py    EC2 Streamlit container — loads the same artifacts from S3
-  api/main.py   FastAPI REST API on App Runner — /predict over the same bundle
+Serving (two independent deployment strategies, one shared model contract):
+  Version A: app.py — Streamlit Community Cloud, committed artifacts, no AWS runtime
+  Version B: app_fastapi_ec2.py — EC2 UI -> App Runner FastAPI -> S3 artifacts
+
+Rollback surface retained during migration:
+  app_ec2.py    EC2 Streamlit container — direct S3 loading and in-process prediction
 ```
 
 The pipeline is **staged and resumable**. Each stage writes a `_SUCCESS` marker to
@@ -104,15 +106,18 @@ at `data`** because the cleaned data and feature tables already live in S3.
 │   ├── registry.py                 # MLflow tracking + registry promotion
 │   ├── inference.py                # load production model + predict contract
 │   ├── rebalancing.py              # net-flow rebalancing priorities (dep+arr -> ranking)
+│   ├── fastapi_client.py            # HTTP client + bundle proxies for the API-backed UI
 │   ├── streamlit_local_serving.py  # local/packaged-artifact serving helpers
 │   └── streamlit_s3_serving.py     # S3-backed serving helpers (EC2)
 ├── app.py                          # Streamlit app (Community Cloud, packaged artifacts)
 ├── app_ec2.py                      # Streamlit entrypoint (EC2 + S3 artifacts)
+├── app_fastapi_ec2.py              # EC2 Streamlit UI backed only by FastAPI
 ├── api/main.py                     # FastAPI /predict service (App Runner serving tier)
 ├── artifacts/streamlit-community-cloud/cloud-2024/   # committed serving artifacts
 ├── docker/
 │   ├── Dockerfile.train            # AWS Batch / local training & pipeline image
 │   ├── Dockerfile.streamlit_ec2    # EC2 Streamlit serving image
+│   ├── Dockerfile.streamlit_fastapi # FastAPI-backed EC2 Streamlit image
 │   └── Dockerfile.api              # FastAPI serving image (App Runner)
 ├── infra/                          # AWS CDK app
 │   ├── app.py                      # BixiNetwork / BixiStorage / BixiMlflow / BixiBatch / BixiServe
@@ -122,6 +127,7 @@ at `data`** because the cleaned data and feature tables already live in S3.
 ├── notebooks/02_modeling_drift.ipynb
 ├── tests/                          # pytest suite (synthetic data, no network)
 ├── requirements.txt                # Streamlit serving deps
+├── requirements-streamlit-api.txt  # FastAPI-backed Streamlit UI deps
 ├── requirements-api.txt            # FastAPI serving deps
 ├── requirements-train.txt          # pipeline / training deps
 └── runtime.txt                     # Python 3.12
@@ -245,7 +251,7 @@ details: [`docs/phase3_rebalancing.md`](docs/phase3_rebalancing.md).
 
 ## Streamlit apps
 
-Both apps share one UI and offer: a multi-day demand forecast (Open-Meteo weather),
+The Streamlit deployments offer: a multi-day demand forecast (Open-Meteo weather),
 a **rebalancing-priorities** page (net-flow map, ranked priority list, per-station
 occupancy trajectory), custom-input single predictions, and a model-monitoring page
 (SHAP, fairness, drift).
@@ -259,6 +265,10 @@ occupancy trajectory), custom-input single predictions, and a model-monitoring p
 - **`app_ec2.py`** — EC2 deployment. Reuses `app.py`'s UI but loads the same Phase-2
   artifacts from S3. Containerized via `docker/Dockerfile.streamlit_ec2`; see
   [`docs/ec2_streamlit_deployment_guide.md`](docs/ec2_streamlit_deployment_guide.md).
+- **`app_fastapi_ec2.py`** — API-backed EC2 deployment. The UI loads no model or S3
+  artifacts; predictions, generated features, monitoring metadata, and rebalancing
+  results come from the App Runner FastAPI service. See
+  [`docs/fastapi_streamlit_deployment_guide.md`](docs/fastapi_streamlit_deployment_guide.md).
 
 ---
 
@@ -288,7 +298,11 @@ curl -X POST localhost:8000/predict -H 'content-type: application/json' \
 | `GET /health` | Liveness (App Runner health check) — status, mode, targets |
 | `GET /stations` | Station names available across both targets |
 | `GET /info` | Per-target eval metrics + registered production model |
+| `GET /monitoring` | Metrics, fairness, drift, registry, and SHAP metadata |
+| `POST /features` | Engineered feature preview without scoring |
 | `POST /predict` | Departure/arrival demand for a station at a timestamp (+ optional weather) |
+| `POST /predict/batch` | Up to 192 predictions in one request (two full days) |
+| `POST /rebalancing` | Ranked station risks and optional 96-slot station trajectory |
 
 Unknown station/baseline → `404`; invalid body → `422` (pydantic). Deploy is the
 gated step `cdk deploy BixiServe` (SSO creds) — see below.
@@ -305,6 +319,9 @@ docker run --rm bixi-pipeline --help
 # EC2 Streamlit serving image
 docker build -f docker/Dockerfile.streamlit_ec2 -t bixi-streamlit .
 
+# FastAPI-backed EC2 Streamlit UI
+docker build -f docker/Dockerfile.streamlit_fastapi -t bixi-streamlit-fastapi .
+
 # FastAPI prediction image (App Runner); runs local mode off the baked bundle
 docker build -f docker/Dockerfile.api -t bixi-api .
 docker run --rm -e BIXI_SERVING_MODE=local -p 8000:8000 bixi-api   # curl :8000/health
@@ -320,9 +337,9 @@ pytest -q tests/
 ```
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on pull requests to `main`, pushes,
-and manual dispatch: it installs deps, runs the test suite, builds **all three** Docker
-images (training + Streamlit + API), smoke-tests the pipeline image (`--help`, no AWS),
-and smoke-tests the API image (local mode, `curl /health`).
+and manual dispatch: it installs deps, runs the test suite, builds the training,
+direct-S3 Streamlit, FastAPI-backed Streamlit, and API images, then smoke-tests the
+pipeline, API, and Streamlit-to-FastAPI contract without AWS.
 Team guide: [`docs/github_actions_guide.md`](docs/github_actions_guide.md).
 
 ---
@@ -332,6 +349,7 @@ Team guide: [`docs/github_actions_guide.md`](docs/github_actions_guide.md).
 - Phase-2 modeling design & decisions: [`docs/phase2_modeling.md`](docs/phase2_modeling.md)
 - Phase-3 net-flow rebalancing layer: [`docs/phase3_rebalancing.md`](docs/phase3_rebalancing.md)
 - EC2 Streamlit deployment: [`docs/ec2_streamlit_deployment_guide.md`](docs/ec2_streamlit_deployment_guide.md)
+- FastAPI-backed Streamlit deployment: [`docs/fastapi_streamlit_deployment_guide.md`](docs/fastapi_streamlit_deployment_guide.md)
 - Model / S3 / EC2 operations: [`docs/model_s3_ec2_operations_guide.md`](docs/model_s3_ec2_operations_guide.md)
 - GitHub Actions / CI: [`docs/github_actions_guide.md`](docs/github_actions_guide.md)
 

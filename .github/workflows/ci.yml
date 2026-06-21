@@ -24,6 +24,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt          # Streamlit serving deps
+          pip install -r requirements-streamlit-api.txt # FastAPI-backed Streamlit UI
           pip install -r requirements-api.txt      # FastAPI serving deps (adds fastapi/uvicorn)
           pip install -r requirements-train.txt    # pipeline (Phase-2) deps (installed last: pins env)
           pip install pytest                        # test runner (not a runtime dep)
@@ -36,6 +37,9 @@ jobs:
 
       - name: Build Streamlit (EC2) image
         run: docker build -f docker/Dockerfile.streamlit_ec2 -t bixi-streamlit .
+
+      - name: Build FastAPI-backed Streamlit image
+        run: docker build -f docker/Dockerfile.streamlit_fastapi -t bixi-streamlit-fastapi .
 
       - name: Build API image
         run: docker build -f docker/Dockerfile.api -t bixi-api .
@@ -54,3 +58,20 @@ jobs:
           docker logs bixi-api
           docker rm -f bixi-api
           test "$ok" = "1"
+
+      - name: Smoke test Streamlit-to-FastAPI contract (no AWS)
+        run: |
+          docker network create bixi-serving
+          docker run -d --network bixi-serving -e BIXI_SERVING_MODE=local --name bixi-api bixi-api
+          ok=
+          for _ in $(seq 1 30); do
+            if docker exec bixi-api curl -fsS http://localhost:8000/health; then ok=1; break; fi
+            sleep 2
+          done
+          test "$ok" = "1"
+          docker run --rm --network bixi-serving \
+            -e BIXI_API_URL=http://bixi-api:8000 \
+            bixi-streamlit-fastapi \
+            python -c "from bixi.fastapi_client import load_api_bundles; print(len(load_api_bundles()))"
+          docker rm -f bixi-api
+          docker network rm bixi-serving

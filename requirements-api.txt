@@ -11,3 +11,5 @@ lightgbm==4.6.0
 boto3==1.43.33
 fastapi==0.115.*
 uvicorn[standard]==0.32.*
+# Required by FastAPI/Starlette TestClient in clean CI environments.
+httpx==0.28.*
