@@ -21,11 +21,14 @@ from dataclasses import dataclass
 # --------------------------------------------------------------------------- #
 AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
 
-# Read-only source data produced by Phase 1 (Sarah / Louis / Rui).
+# The cloud deployment injects CDK-managed bucket names. The historical default
+# keeps local utilities backward compatible, but a fresh AWS deployment never
+# depends on a pre-existing bucket with this name.
 DATA_BUCKET = os.getenv("BIXI_DATA_BUCKET", "insy684")
 DATA_PREFIX = os.getenv("BIXI_DATA_PREFIX", "processed-data").strip("/")
 RAW_PREFIX = os.getenv("BIXI_RAW_PREFIX", "bixi-data").strip("/")
 WEATHER_PREFIX = os.getenv("BIXI_WEATHER_PREFIX", "weather-data").strip("/")
+SERVING_PREFIX = os.getenv("BIXI_SERVING_PREFIX", "bixi-serving-artifacts").strip("/")
 
 # Pipeline outputs (checkpoints, models, reports). Created by the CDK StorageStack;
 # defaults to the data bucket under a prefix so local dev works with no extra setup.
@@ -102,15 +105,24 @@ def split_specs(target: str) -> dict[str, SplitSpec]:
 # --------------------------------------------------------------------------- #
 # Pipeline stages
 # --------------------------------------------------------------------------- #
-# `ingest` (raw trip/weather download + 15-min demand cleaning -> S3) and
-# `features` (build the leakage-safe feature tables -> S3) are the from-scratch
-# rebuild stages. They are excluded from the default run because the good raw
-# files and feature tables already live in S3 — run the full rebuild explicitly
-# with ``python -m bixi.pipeline --from ingest``.
+# A default run is a complete reconstruction from public data. Every stage still
+# has an S3 success marker, so ``--from`` and ``--only`` remain available when
+# resuming a partially completed deployment.
 INGEST_STAGE = "ingest"
 FEATURES_STAGE = "features"
-DEFAULT_STAGES = ["data", "train", "explain", "fairness", "drift", "register"]
-ALL_STAGES = [INGEST_STAGE, FEATURES_STAGE] + DEFAULT_STAGES
+SERVING_STAGE = "serving"
+ALL_STAGES = [
+    INGEST_STAGE,
+    FEATURES_STAGE,
+    SERVING_STAGE,
+    "data",
+    "train",
+    "explain",
+    "fairness",
+    "drift",
+    "register",
+]
+DEFAULT_STAGES = list(ALL_STAGES)
 
 
 def _join(*parts: str) -> str:

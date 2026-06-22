@@ -13,12 +13,13 @@ The workflow is defined in:
 
 The single `test-and-build` job runs these steps:
 
-1. Install dependencies from `requirements.txt` (Streamlit serving) and
-   `requirements-train.txt` (pipeline / training), plus `pytest`.
+1. Install the Community Cloud, API-backed Streamlit, FastAPI, and training
+   dependencies, plus `pytest`.
 2. Run the test suite: `pytest -q tests/`.
 3. Build the training / pipeline image: `docker build -f docker/Dockerfile.train -t bixi-pipeline .`.
-4. Build the EC2 Streamlit image: `docker build -f docker/Dockerfile.streamlit_ec2 -t bixi-streamlit .`.
-5. Smoke-test the pipeline image with no AWS: `docker run --rm bixi-pipeline --help`.
+4. Build the API-backed Streamlit image: `docker build -f docker/Dockerfile.streamlit_fastapi -t bixi-streamlit-fastapi .`.
+5. Build the FastAPI image: `docker build -f docker/Dockerfile.api -t bixi-api .`.
+6. Smoke-test the pipeline, API, and Streamlit-to-FastAPI contract without AWS.
 
 If every step passes, the pull request gets a green check. If any step fails,
 GitHub shows a red X and the branch should be fixed before merging.
@@ -69,9 +70,10 @@ again. GitHub Actions reruns automatically.
 # Tests (scope to tests/ so stale infra/cdk.out copies aren't collected)
 pytest -q tests/
 
-# Build both images
+# Build the runtime images
 docker build -f docker/Dockerfile.train -t bixi-pipeline .
-docker build -f docker/Dockerfile.streamlit_ec2 -t bixi-streamlit .
+docker build -f docker/Dockerfile.streamlit_fastapi -t bixi-streamlit-fastapi .
+docker build -f docker/Dockerfile.api -t bixi-api .
 
 # Smoke-test the pipeline image (no AWS needed)
 docker run --rm bixi-pipeline --help
@@ -79,8 +81,8 @@ docker run --rm bixi-pipeline --help
 
 ## Current Deployment Boundary
 
-CI verifies that the code can be tested and that both images build and start.
+CI verifies that the code can be tested and that the runtime images build and start.
 It does **not** deploy to AWS. The Streamlit Community Cloud app auto-deploys
-from `main` on its own; the EC2 image is rebuilt and redeployed manually (see
-[`ec2_streamlit_deployment_guide.md`](ec2_streamlit_deployment_guide.md)), and
-the training pipeline runs on AWS Batch via the CDK infra (see the README).
+from `main` on its own. The EC2 UI and App Runner API are deployed manually (see
+[`fastapi_streamlit_deployment_guide.md`](fastapi_streamlit_deployment_guide.md)),
+and the training pipeline runs on AWS Batch via the CDK infra (see the README).

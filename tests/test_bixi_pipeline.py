@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from bixi import config, data, fairness, models
+from bixi import config, data, fairness, models, serving_baselines
 
 
 def _make_df(year: int, month: int, n_stations: int = 8, slots: int = 200,
@@ -43,6 +43,11 @@ def test_split_spec_naming():
     assert s["val"].months == (5,)
     with pytest.raises(ValueError):
         config.split_specs("nope")
+
+
+def test_default_pipeline_is_a_full_rebuild():
+    assert config.DEFAULT_STAGES == config.ALL_STAGES
+    assert config.DEFAULT_STAGES[:3] == ["ingest", "features", "serving"]
 
 
 def test_filter_to_range_drops_spillover():
@@ -92,3 +97,26 @@ def test_fit_predict_and_fairness():
     rep = fairness.fairness_report(meta, y, pred)
     assert "overall" in rep and "flags" in rep
     assert "by_demand_tier" in rep
+
+
+def test_build_serving_baselines_has_online_contract():
+    frame = _make_df(2024, 6, n_stations=2, slots=7 * 96 * 2)
+    result = serving_baselines.build_serving_baselines(frame)
+    expected = {
+        "station_name",
+        "dayofweek",
+        "slot_of_day",
+        "latitude",
+        "longitude",
+        "slot_sin",
+        "slot_cos",
+        "hist_avg_demand",
+        "baseline_prev_15min",
+        "baseline_prev_1h",
+        "baseline_yesterday_same_slot",
+    }
+    assert set(result.columns) == expected
+    assert result[list(expected - {"station_name"})].isna().sum().sum() == 0
+    assert serving_baselines.serving_key("cloud-2024", "arrival") == (
+        "bixi-serving-artifacts/cloud-2024/arrival/serving_baselines.parquet"
+    )

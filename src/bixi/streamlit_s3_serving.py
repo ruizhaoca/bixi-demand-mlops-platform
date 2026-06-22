@@ -1,9 +1,8 @@
-"""S3-backed serving helpers for the EC2-only Streamlit deployment.
+"""S3-backed model-bundle loader for the App Runner FastAPI service.
 
 This module does not use the packaged local artifact bundle committed for
-Streamlit Community Cloud. It reads Phase-2 artifacts from S3 at app startup
-using the EC2 instance IAM role, then keeps the loaded model objects in the
-Streamlit process cache.
+Streamlit Community Cloud. In cloud mode, FastAPI reads the Phase-2 artifacts
+from S3 at App Runner startup through the App Runner instance IAM role.
 """
 
 from __future__ import annotations
@@ -40,7 +39,7 @@ class S3ArtifactConfig:
 
 
 def s3_artifact_config() -> S3ArtifactConfig:
-    """Read EC2 Streamlit artifact settings from environment variables."""
+    """Read App Runner S3 artifact settings from environment variables."""
     return S3ArtifactConfig(
         run_id=os.getenv("BIXI_RUN_ID", DEFAULT_RUN_ID),
         pipeline_bucket=os.getenv("BIXI_PIPELINE_BUCKET", DEFAULT_PIPELINE_BUCKET),
@@ -94,6 +93,20 @@ def _read_csv_s3(s3_client, bucket: str, key: str) -> pd.DataFrame:
     return pd.read_csv(io.BytesIO(payload))
 
 
+def _compact_s3_baselines(baselines: pd.DataFrame) -> pd.DataFrame:
+    """Reduce repeated station strings and coordinate precision in memory."""
+    station_dtype = baselines[config.STATION_COL].dtype
+    if (
+        not isinstance(station_dtype, pd.CategoricalDtype)
+        and pd.api.types.is_string_dtype(station_dtype)
+    ):
+        baselines[config.STATION_COL] = baselines[config.STATION_COL].astype("category")
+    for column in ("latitude", "longitude"):
+        if column in baselines.columns and baselines[column].dtype == "float64":
+            baselines[column] = baselines[column].astype("float32")
+    return baselines
+
+
 def _load_target_bundle(s3_client, settings: S3ArtifactConfig, target: str) -> LocalTargetBundle:
     run_prefix = _run_prefix(settings, target)
     model = pickle.loads(
@@ -122,6 +135,7 @@ def _load_target_bundle(s3_client, settings: S3ArtifactConfig, target: str) -> L
             )
         )
     )
+    baselines = _compact_s3_baselines(baselines)
     baseline_lookup = baselines.set_index([config.STATION_COL, "dayofweek", "slot_of_day"]).sort_index()
 
     return LocalTargetBundle(

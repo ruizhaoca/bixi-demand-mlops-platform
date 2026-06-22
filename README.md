@@ -1,88 +1,72 @@
 # BIXI Demand MLOps Platform
+**Local Streamlit demo:** https://bixidemandlocal.streamlit.app/
 
-Production-grade MLOps platform that forecasts **15-minute** bike-sharing demand for
-**every** BIXI station in Montreal (~1,100+ stations), separately for **departures**
-and **arrivals**, and serves the models through interactive Streamlit apps. The
-project turns a course-1 notebook prototype into a resumable, cloud-native pipeline
-with full experiment tracking, a model registry, explainability, fairness analysis,
-four-type drift monitoring, containerization, CI/CD, and AWS infrastructure-as-code.
 
-**Live demos**
-
-- Local Streamlit deployment (Community Cloud, packaged artifacts): https://bixidemandlocal.streamlit.app/
-- EC2 Streamlit deployment (S3-backed artifacts): http://3.16.250.166:8501/
+Cloud serving: AWS runtime resources have been removed; the reproducible deployment pipeline is retained in this repository.
 
 ---
+<img width="4590" height="2581" alt="1" src="https://github.com/user-attachments/assets/6271a915-1e19-4b5e-870a-ef03cb6eb006" />
 
-## What the platform does
+---
+<img width="4843" height="2724" alt="2" src="https://github.com/user-attachments/assets/3629d6bf-80b5-4f2a-83b5-628707765b87" />
 
-- **15-minute resolution** demand instead of hourly — 4× finer, far more useful for
-  operational rebalancing.
-- **Departures and arrivals predicted separately** through one shared pipeline run
-  twice, surfacing rebalancing pressure (high-departure / low-arrival stations).
-- **Net-flow rebalancing layer** that combines both forecasts into an operational
-  priority list — which stations will run **empty (need bikes)** or **overflow
-  (need docks)** over a representative weekday, ranked by severity.
-- **All stations**, not just the busiest few.
-- **Leakage-safe features**: temporal (cyclical 15-min slot, day-of-week, month),
-  historical 2024 profile baselines built **leave-one-out** on the training rows,
-  and merged 15-minute weather.
-- **Advanced encoding** of the high-cardinality `station_name` (frequency + smoothed
-  target encoding), **fit on train only**.
-- **Multi-model selection**: LightGBM / XGBoost candidates **+ FLAML AutoML** search
-  **+ Optuna** Bayesian HPO; the best model by validation RMSE is selected and
-  promoted automatically.
-- **MLflow** experiment tracking + Model Registry (`production` alias).
-- **SHAP + LIME** explainability, **fairness** error-parity analysis across demand
-  tiers and geography, and **Evidently** drift reports (feature / target /
-  prediction / concept).
-- **Containerized** training and serving images, a **GitHub Actions** CI pipeline,
-  and **AWS CDK** infrastructure (VPC, S3, MLflow on EC2, AWS Batch training).
+---
+## Project Overview
+Production-grade MLOps platform that forecasts **15-minute** bike-sharing demand for **every** BIXI station in Montreal (~1,100+ stations), separately for **departures** and **arrivals**, and serves the models through interactive Streamlit apps. The project implements a resumable, cloud-native pipeline with full experiment tracking, a model registry, explainability, fairness analysis, four-type drift monitoring, containerization, CI/CD, and AWS infrastructure-as-code.
 
 ---
 
 ## Architecture
 
-```
-GitHub ──push──► GitHub Actions CI  (pytest + build training & Streamlit images)
+```text
+GitHub ──push──► GitHub Actions CI
+                 ├── pytest
+                 ├── build AWS Batch training image
+                 ├── build App Runner FastAPI image
+                 └── build EC2 Streamlit image + API contract smoke test
 
-AWS (us-east-2), provisioned by AWS CDK (infra/):
+AWS training and model lifecycle (us-east-2, provisioned by CDK):
   BixiNetwork  VPC (public subnets, no NAT)
-  BixiStorage  S3 pipeline bucket (checkpoints / artifacts / reports) + SSM param
+  BixiStorage  S3 data + pipeline buckets + SSM parameters
   BixiMlflow   MLflow tracking server on EC2 + S3 artifact store
-  BixiBatch    ECR training image + AWS Batch compute + job definition
-  BixiServe    FastAPI /predict service on App Runner (ECR image, no VPC)
+  BixiBatch    ECR training image + AWS Batch compute and job definition
+  BixiServe    ECR API image + App Runner FastAPI + IAM + Secrets Manager API key
+  BixiUi       EC2 Streamlit container + Elastic IP + SSM access
 
-  AWS Batch runs `python -m bixi.pipeline` (docker/Dockerfile.train) over the full
-  dataset, reading source data from s3://insy684 and writing checkpoints, models,
-  explainability/fairness/drift artifacts to the CDK pipeline bucket; runs + models
-  are tracked in MLflow.
+Version A — long-term fallback:
+  Browser -> Streamlit Community Cloud (app.py) -> packaged local artifacts
+              ├── Open-Meteo forecast API (cached for 24 hours)
+              └── packaged local artifacts
 
-Serving (three tiers, one shared model bundle):
-  app.py        Streamlit Community Cloud — committed artifacts (no AWS at runtime)
-  app_ec2.py    EC2 Streamlit container — loads the same artifacts from S3
-  api/main.py   FastAPI REST API on App Runner — /predict over the same bundle
+Version B — AWS cloud serving:
+  Browser -> EC2 Elastic IP:8501
+          -> Streamlit Docker container (app_fastapi_ec2.py)
+              ├── Open-Meteo forecast API (cached for 24 hours)
+              └── HTTPS + X-API-Key
+                  -> App Runner FastAPI (api/main.py)
+                      -> App Runner IAM role
+                          ├── CDK pipeline S3: model, encoder, metrics, monitoring
+                          └── CDK data S3: raw, cleaned, features, serving baselines
 ```
 
-The pipeline is **staged and resumable**. Each stage writes a `_SUCCESS` marker to
-`s3://<pipeline-bucket>/bixi-mlops/runs/<run-id>/<target>/<stage>/`, so a run can be
-resumed from any step. The identical code runs locally on a station subsample and on
-AWS Batch over the full dataset.
+The EC2 UI contains no model and has no direct S3 dependency. App Runner loads the Phase-2 bundles once at service startup and performs feature engineering, prediction, monitoring lookup, and rebalancing. Version A remains functional after AWS resources are removed because its artifacts are committed under `artifacts/`.
 
 ```
-ingest -> features -> data -> train -> explain -> fairness -> drift -> register
+ingest -> features -> serving -> data -> train -> explain -> fairness -> drift -> register
 ```
 
 - `ingest` — download the raw BIXI trip archives + Open-Meteo weather and clean trips
   into 15-minute station demand tables (`bixi.ingest` + `bixi.demand_ingestion_cleaning`).
 - `features` — build the leakage-safe feature tables (`bixi.feature_engineering`).
+- `serving` — build compact future-inference baselines (`bixi.serving_baselines`).
 - `data` — range-filter, leakage-safe station encoding, demand tiers (`bixi.data`).
 - `train` — candidates + FLAML + Optuna, select best, log to MLflow (`bixi.models`).
 - `explain` / `fairness` / `drift` — SHAP+LIME, error parity, Evidently 4-type drift.
 - `register` — promote the best run to the `production` alias (`bixi.registry`).
 
-`ingest` and `features` are the from-scratch rebuild stages; the **default run starts
-at `data`** because the cleaned data and feature tables already live in S3.
+The default run starts at `ingest` and reconstructs every cloud artifact from public
+BIXI and Open-Meteo data. S3 success markers still support `--from` and `--only`
+when resuming a partially completed run.
 
 ---
 
@@ -95,6 +79,7 @@ at `data`** because the cleaned data and feature tables already live in S3.
 │   ├── ingest.py                   # ingest stage: weather + trips + demand cleaning
 │   ├── demand_ingestion_cleaning.py# raw trip download/extract -> 15-min demand CSVs
 │   ├── feature_engineering.py      # features stage: leakage-safe feature tables
+│   ├── serving_baselines.py       # serving stage: online baseline lookup
 │   ├── data.py                     # range filter, station encoding, demand tiers
 │   ├── models.py                   # candidates, FLAML AutoML, Optuna HPO, metrics
 │   ├── pipeline.py                 # resumable staged runner (python -m bixi.pipeline)
@@ -104,24 +89,27 @@ at `data`** because the cleaned data and feature tables already live in S3.
 │   ├── registry.py                 # MLflow tracking + registry promotion
 │   ├── inference.py                # load production model + predict contract
 │   ├── rebalancing.py              # net-flow rebalancing priorities (dep+arr -> ranking)
+│   ├── fastapi_client.py            # HTTP client + bundle proxies for the API-backed UI
 │   ├── streamlit_local_serving.py  # local/packaged-artifact serving helpers
-│   └── streamlit_s3_serving.py     # S3-backed serving helpers (EC2)
+│   └── streamlit_s3_serving.py     # App Runner S3 model-bundle loader
 ├── app.py                          # Streamlit app (Community Cloud, packaged artifacts)
-├── app_ec2.py                      # Streamlit entrypoint (EC2 + S3 artifacts)
+├── app_fastapi_ec2.py              # EC2 Streamlit UI backed only by FastAPI
 ├── api/main.py                     # FastAPI /predict service (App Runner serving tier)
 ├── artifacts/streamlit-community-cloud/cloud-2024/   # committed serving artifacts
 ├── docker/
 │   ├── Dockerfile.train            # AWS Batch / local training & pipeline image
-│   ├── Dockerfile.streamlit_ec2    # EC2 Streamlit serving image
+│   ├── Dockerfile.streamlit_fastapi # FastAPI-backed EC2 Streamlit image
 │   └── Dockerfile.api              # FastAPI serving image (App Runner)
 ├── infra/                          # AWS CDK app
-│   ├── app.py                      # BixiNetwork / BixiStorage / BixiMlflow / BixiBatch / BixiServe
-│   └── bixi_infra/                 # network / storage / mlflow / batch / serve stacks
+│   ├── app.py                      # BixiNetwork / Storage / MLflow / Batch / Serve / Ui
+│   └── bixi_infra/                 # all CDK stack definitions
 ├── scripts/                        # deploy_infra.sh, run_pipeline.sh, teardown.sh, ...
-├── docs/                           # design + ops guides (+ presentation assets)
+├── docs/                           # design, deployment, monitoring, and AWS evidence
+│   └── aws_deployment_evidence/    # archived, sanitized deployment screenshots
 ├── notebooks/02_modeling_drift.ipynb
 ├── tests/                          # pytest suite (synthetic data, no network)
 ├── requirements.txt                # Streamlit serving deps
+├── requirements-streamlit-api.txt  # FastAPI-backed Streamlit UI deps
 ├── requirements-api.txt            # FastAPI serving deps
 ├── requirements-train.txt          # pipeline / training deps
 └── runtime.txt                     # Python 3.12
@@ -129,79 +117,56 @@ at `data`** because the cleaned data and feature tables already live in S3.
 
 ---
 
-## Where every asset lives (S3 + MLflow)
+## Rebuild from an empty AWS environment
 
-Two buckets. **`insy684`** is persistent (source data + backups, *not* CDK-managed).
-The **CDK pipeline bucket** holds the pipeline outputs + MLflow artifacts and is
-**deleted on `cdk destroy`** — `scripts/teardown.sh` backs it up to `insy684` first.
-Its name is in SSM `/bixi/pipeline-bucket` and the `BixiStorage` CDK output.
+### Automated deployment (recommended)
 
-```
-s3://insy684/                         # PERSISTENT (source data + backups)
-├── bixi-data/{2024,2025,2026}/       # raw BIXI open-data trip CSVs
-├── weather-data/                     # 15-min Montreal weather (Open-Meteo)
-├── processed-data/                   # 15-min demand CSVs + feature tables (parquet)
-├── bixi-serving-artifacts/           # serving baselines for the Streamlit apps
-└── bixi-mlops-backup/                # created by scripts/teardown.sh
+From Windows PowerShell, the orchestrator bootstraps CDK, creates the rebuild
+infrastructure, waits for the full Batch pipeline, and only then deploys App Runner
+and the EC2 Streamlit UI:
 
-s3://<CDK pipeline bucket>/           # EPHEMERAL (cloud run outputs)
-├── bixi-mlops/runs/<run-id>/<target>/    # <target> = departure | arrival
-│   ├── data/      encoder.pkl, tiers.json, data_summary.json
-│   ├── train/     best_model.pkl, metrics.json  (R²/RMSE/MAE per split)
-│   ├── explain/   shap_*.png/csv, lime_instance_*.html
-│   ├── fairness/  fairness_report.json
-│   ├── drift/     {feature,target,prediction}_drift_*.html, concept_*.html, drift_summary.json
-│   └── register/  registered_model.json
-├── mlflow/<experiment_id>/           # MLflow run artifacts
-└── mlflow-bootstrap/                 # MLflow EC2 bootstrap logs (debug)
+```powershell
+.\scripts\deploy_from_scratch.ps1 `
+  -AwsProfile bixi `
+  -Region us-east-2 `
+  -MlflowAllowCidr "<your-public-ip>/32"
 ```
 
-**MLflow** (CDK output `BixiMlflow.MlflowPublicUrl`): experiments
-`bixi-demand-departure` / `bixi-demand-arrival` (every candidate + FLAML + Optuna
-run); each best model registered with the **`production`** alias.
+The EC2 bootstrap checks out `main` by default. Run this after the deployment code
+has been merged to `main`.
 
----
-
-## Running the pipeline
-
-### Full rebuild from scratch (one command)
-
-Downloads + cleans raw trips, builds features, then trains/evaluates/monitors and
-registers — for both targets:
+### Manual AWS sequence
 
 ```bash
-python -m bixi.pipeline --from ingest --targets both --run-id rebuild
+export AWS_PROFILE=bixi
+export AWS_DEFAULT_REGION=us-east-2
+export BIXI_ALLOW_CIDR=<your-public-ip>/32
+export BIXI_RUN_ID=cloud-2024
+
+aws sso login --profile "$AWS_PROFILE"
+./scripts/deploy_infra.sh
+./scripts/run_pipeline.sh
+# Wait for the Batch job to reach SUCCEEDED.
+BIXI_RUN_ID=cloud-2024 BIXI_REPO_REF=main ./scripts/deploy_serving.sh
 ```
 
-### Lean cloud run (data already in S3)
+The initial Batch run starts at `ingest` and continues through `register`. App
+Runner and the EC2 UI are deliberately deployed only after Batch succeeds.
+
+### Delete the rebuilt environment
 
 ```bash
-# default stages: data -> train -> explain -> fairness -> drift -> register
-python -m bixi.pipeline --targets both --run-id cloud-2024 --n-trials 40
-# resume a step:        --from train      |   re-run one stage:   --only drift --force
+export AWS_PROFILE=bixi
+export AWS_DEFAULT_REGION=us-east-2
+./scripts/teardown.sh
 ```
 
-### On AWS Batch
-
-```bash
-BIXI_ALLOW_CIDR=<your-ip>/32 ./scripts/deploy_infra.sh   # provision infra (CDK)
-./scripts/run_pipeline.sh --targets both --run-id cloud-2024   # submit Batch job
-./scripts/teardown.sh                                     # backup + cdk destroy
-```
-
-### Fast local smoke test (station subsample, no Batch)
-
-```bash
-python -m bixi.pipeline --targets departure --run-id smoke \
-    --local-dir ~/bixi_data --sample-stations 80 --n-trials 8 --flaml-budget 30
-```
+This deletes every BIXI stack and both CDK-managed buckets. The packaged Community
+Cloud app remains available because its artifacts are committed to the repository.
 
 ---
 
 ## Results (selected model: LightGBM + Optuna, per split)
-
-15-minute slot-level demand is far noisier than hourly aggregates (many zero-demand
-slots), so absolute R² is modest by design; errors are well under one trip per slot.
 
 | Target | Split | R² | RMSE | MAE |
 |--------|-------|----|------|-----|
@@ -210,69 +175,34 @@ slots), so absolute R² is modest by design; errors are well under one trip per 
 | Arrival | Validation (May 2025) | 0.339 | 0.976 | 0.554 |
 | Arrival | Test (Oct 2025) | 0.339 | 1.026 | 0.585 |
 
-Both targets select `lgbm_optuna`. SHAP attributes most signal to the 2024 historical
-baselines and the cyclical time-of-day features, with weather as a secondary driver.
-
----
-
-## Rebalancing priorities
-
-The departure and arrival forecasts are only operationally useful **together**. The
-net-flow layer (`src/bixi/rebalancing.py`) combines them into a rebalancing plan: for
-a representative weekday it computes `net_flow = arrival_pred − departure_pred` per
-station per 15-minute slot, cumulates it across the day to a relative occupancy
-trajectory, and reads each station's **peak deficit** (bikes needed / stockout risk)
-and **peak surplus** (docks needed / overflow risk). Stations are ranked by severity
-and tagged **needs bikes** or **needs docks** — a daily priority list for where a
-rebalancing truck adds the most value. It is scored under a neutral weather vector
-because net flow is robust to weather level (rain depresses departures and arrivals
-together). No AWS is required — it runs off the committed serving artifacts.
-
-```bash
-PYTHONPATH=src python -m bixi.rebalancing            # print the top-20 priorities (Tuesday)
-PYTHONPATH=src python -m bixi.rebalancing --dayofweek 4 --top 30 --write-csv
-```
-
-The Streamlit **Rebalancing Priorities** page renders this as a pressure map (colored
-by need, sized by risk), a ranked table, and a per-station occupancy trajectory.
-
-**Limitation:** the trip data has no dock capacity or real-time occupancy, so the
-trajectory starts from a common zero reference. This is a **relative** risk ranking
-and priority order — not exact stockout clock-times or absolute fill levels. Design
-details: [`docs/phase3_rebalancing.md`](docs/phase3_rebalancing.md).
+Both targets select lgbm_optuna. With an RMSE of approximately one trip per 15-minute slot, both models capture general demand patterns despite the inherent short-term variability of station-level demand. SHAP analysis identifies the 2024 historical baselines and cyclical time-of-day features as the strongest predictors, with weather playing a secondary role.
 
 ---
 
 ## Streamlit apps
 
-Both apps share one UI and offer: a multi-day demand forecast (Open-Meteo weather),
-a **rebalancing-priorities** page (net-flow map, ranked priority list, per-station
-occupancy trajectory), custom-input single predictions, and a model-monitoring page
-(SHAP, fairness, drift).
+The Streamlit deployments offer: a multi-day demand forecast (Open-Meteo weather), a rebalancing-priorities page (net-flow map, ranked priority list, per-station occupancy trajectory), custom-input single predictions, and a model-monitoring page (SHAP, fairness, drift).
 
-- **`app.py`** — Streamlit Community Cloud. Loads model artifacts committed under
-  `artifacts/streamlit-community-cloud/cloud-2024/`; needs no AWS at runtime.
+- **`app.py`** — Streamlit Community Cloud. Loads model artifacts committed under `artifacts/streamlit-community-cloud/cloud-2024/`; needs no AWS at runtime.
   ```bash
   pip install -r requirements.txt
   streamlit run app.py
   ```
-- **`app_ec2.py`** — EC2 deployment. Reuses `app.py`'s UI but loads the same Phase-2
-  artifacts from S3. Containerized via `docker/Dockerfile.streamlit_ec2`; see
-  [`docs/ec2_streamlit_deployment_guide.md`](docs/ec2_streamlit_deployment_guide.md).
+- **`app_fastapi_ec2.py`** — API-backed EC2 deployment. The CDK-managed UI contains
+  no model or S3 credentials; predictions, generated features, monitoring metadata,
+  and rebalancing results come from App Runner. See
+  [`docs/fastapi_streamlit_deployment_guide.md`](docs/fastapi_streamlit_deployment_guide.md).
 
 ---
 
 ## Prediction API (FastAPI · App Runner)
 
-The third serving tier is a thin **FastAPI** REST service (`api/main.py`) over the
-**same** model bundles as the Streamlit apps — `build_feature_row` + `predict_one`,
-no new ML logic, so predictions match across every surface. It is containerized via
-`docker/Dockerfile.api` and provisioned on **AWS App Runner** by the `BixiServe` CDK
-stack (`infra/bixi_infra/serve_stack.py`).
+The cloud-serving backend is a thin **FastAPI** REST service (`api/main.py`) over the **same** model bundles as the Streamlit apps — `build_feature_row` + `predict_one`, no new ML logic, so predictions match across every surface. It is containerized via `docker/Dockerfile.api` and provisioned on **AWS App Runner** by the `BixiServe` CDK stack (`infra/bixi_infra/serve_stack.py`).
 
-Serving mode is chosen at startup by `BIXI_SERVING_MODE`: `local` (default — the
-committed `artifacts/streamlit-community-cloud/cloud-2024/` bundle, no AWS) or `s3`
-(App Runner reads the bundle from S3 via the instance IAM role).
+Serving mode is chosen at startup by `BIXI_SERVING_MODE`: `local` (default — the committed `artifacts/streamlit-community-cloud/cloud-2024/` bundle, no AWS) or `s3` (App Runner reads the bundle from S3 via the instance IAM role).
+
+In the deployed cloud service, `/health` is public. Every data and prediction endpoint requires an `X-API-Key`; CDK creates the key in AWS Secrets Manager and
+injects it into App Runner without committing it to the repository.
 
 ```bash
 pip install -r requirements-api.txt
@@ -288,7 +218,11 @@ curl -X POST localhost:8000/predict -H 'content-type: application/json' \
 | `GET /health` | Liveness (App Runner health check) — status, mode, targets |
 | `GET /stations` | Station names available across both targets |
 | `GET /info` | Per-target eval metrics + registered production model |
+| `GET /monitoring` | Metrics, fairness, drift, registry, and SHAP metadata |
+| `POST /features` | Engineered feature preview without scoring |
 | `POST /predict` | Departure/arrival demand for a station at a timestamp (+ optional weather) |
+| `POST /predict/batch` | Up to 192 predictions in one request (two full days) |
+| `POST /rebalancing` | Ranked station risks and optional 96-slot station trajectory |
 
 Unknown station/baseline → `404`; invalid body → `422` (pydantic). Deploy is the
 gated step `cdk deploy BixiServe` (SSO creds) — see below.
@@ -302,8 +236,8 @@ gated step `cdk deploy BixiServe` (SSO creds) — see below.
 docker build -f docker/Dockerfile.train -t bixi-pipeline .
 docker run --rm bixi-pipeline --help
 
-# EC2 Streamlit serving image
-docker build -f docker/Dockerfile.streamlit_ec2 -t bixi-streamlit .
+# FastAPI-backed EC2 Streamlit UI
+docker build -f docker/Dockerfile.streamlit_fastapi -t bixi-streamlit-fastapi .
 
 # FastAPI prediction image (App Runner); runs local mode off the baked bundle
 docker build -f docker/Dockerfile.api -t bixi-api .
@@ -314,15 +248,23 @@ docker run --rm -e BIXI_SERVING_MODE=local -p 8000:8000 bixi-api   # curl :8000/
 
 ## Tests & CI
 
+The serving and training images intentionally use separate dependency sets. For a
+shared local test environment, install them in the same order as CI; the deployed
+Docker images remain isolated and install only their own runtime requirements.
+
 ```bash
-pip install -r requirements-train.txt pytest
+pip install -r requirements.txt
+pip install -r requirements-streamlit-api.txt
+pip install -r requirements-api.txt
+pip install -r requirements-train.txt
+pip install pytest
 pytest -q tests/
 ```
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on pull requests to `main`, pushes,
-and manual dispatch: it installs deps, runs the test suite, builds **all three** Docker
-images (training + Streamlit + API), smoke-tests the pipeline image (`--help`, no AWS),
-and smoke-tests the API image (local mode, `curl /health`).
+and manual dispatch: it installs deps, runs the test suite, builds the training,
+FastAPI-backed Streamlit and API images, then smoke-tests the
+pipeline, API, and Streamlit-to-FastAPI contract without AWS.
 Team guide: [`docs/github_actions_guide.md`](docs/github_actions_guide.md).
 
 ---
@@ -331,21 +273,13 @@ Team guide: [`docs/github_actions_guide.md`](docs/github_actions_guide.md).
 
 - Phase-2 modeling design & decisions: [`docs/phase2_modeling.md`](docs/phase2_modeling.md)
 - Phase-3 net-flow rebalancing layer: [`docs/phase3_rebalancing.md`](docs/phase3_rebalancing.md)
-- EC2 Streamlit deployment: [`docs/ec2_streamlit_deployment_guide.md`](docs/ec2_streamlit_deployment_guide.md)
-- Model / S3 / EC2 operations: [`docs/model_s3_ec2_operations_guide.md`](docs/model_s3_ec2_operations_guide.md)
+- EC2 Streamlit + App Runner FastAPI deployment: [`docs/fastapi_streamlit_deployment_guide.md`](docs/fastapi_streamlit_deployment_guide.md)
+- Archived AWS deployment screenshots: [`docs/aws_deployment_evidence/`](docs/aws_deployment_evidence/)
 - GitHub Actions / CI: [`docs/github_actions_guide.md`](docs/github_actions_guide.md)
-
-### Security
-
-No AWS credentials are committed. Code uses the default boto3 credential chain — SSO
-locally, an attached IAM role on EC2 / AWS Batch. `.env` is git-ignored; only
-`.env.example` (a template) is tracked.
 
 ---
 
 ## Team
-
-Repository: **bixi-demand-mlops-platform**
 
 | Name | GitHub |
 |------|--------|

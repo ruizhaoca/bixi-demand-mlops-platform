@@ -1,6 +1,6 @@
 """App Runner serving tier for the BIXI demand FastAPI service.
 
-This is the third serving surface (alongside the two Streamlit deployments): the
+This stack deploys the backend for the EC2 Streamlit cloud application: the
 ``api/`` FastAPI app, containerized via ``docker/Dockerfile.api`` and run on
 **AWS App Runner** — no VPC needed (App Runner reaches S3 over the public AWS
 API). Mirrors the ``DockerImageAsset`` + IAM + ``CfnOutput`` pattern in
@@ -21,6 +21,7 @@ from aws_cdk import CfnOutput, Stack
 from aws_cdk import aws_apprunner as apprunner
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_s3 as s3
+from aws_cdk import aws_secretsmanager as secretsmanager
 from aws_cdk.aws_ecr_assets import DockerImageAsset, Platform
 from constructs import Construct
 
@@ -34,7 +35,7 @@ class ServeStack(Stack):
         cid: str,
         *,
         pipeline_bucket: s3.IBucket,
-        data_bucket_name: str = "insy684",
+        data_bucket: s3.IBucket,
         run_id: str = "cloud-2024",
         **kwargs,
     ) -> None:
@@ -63,7 +64,6 @@ class ServeStack(Stack):
             assumed_by=iam.ServicePrincipal("tasks.apprunner.amazonaws.com"),
         )
         pipeline_bucket.grant_read(instance_role)
-        data_bucket = s3.Bucket.from_bucket_name(self, "DataBucket", data_bucket_name)
         data_bucket.grant_read(instance_role)
         instance_role.add_to_policy(
             iam.PolicyStatement(
@@ -72,11 +72,22 @@ class ServeStack(Stack):
             )
         )
 
+        api_key_secret = secretsmanager.Secret(
+            self,
+            "ApiKey",
+            description="API key for the BIXI App Runner prediction service",
+            generate_secret_string=secretsmanager.SecretStringGenerator(
+                exclude_punctuation=True,
+                password_length=40,
+            ),
+        )
+        api_key_secret.grant_read(instance_role)
+
         runtime_env = {
             "BIXI_SERVING_MODE": "s3",
             "BIXI_RUN_ID": run_id,
             "BIXI_PIPELINE_BUCKET": pipeline_bucket.bucket_name,
-            "BIXI_DATA_BUCKET": data_bucket_name,
+            "BIXI_DATA_BUCKET": data_bucket.bucket_name,
             "AWS_REGION": self.region,
         }
         env_pairs = [
@@ -99,12 +110,18 @@ class ServeStack(Stack):
                     image_configuration=apprunner.CfnService.ImageConfigurationProperty(
                         port="8000",
                         runtime_environment_variables=env_pairs,
+                        runtime_environment_secrets=[
+                            apprunner.CfnService.KeyValuePairProperty(
+                                name="BIXI_API_KEY",
+                                value=api_key_secret.secret_arn,
+                            )
+                        ],
                     ),
                 ),
             ),
             instance_configuration=apprunner.CfnService.InstanceConfigurationProperty(
-                cpu="0.25 vCPU",
-                memory="0.5 GB",
+                cpu="1 vCPU",
+                memory="2 GB",
                 instance_role_arn=instance_role.role_arn,
             ),
             health_check_configuration=apprunner.CfnService.HealthCheckConfigurationProperty(
@@ -119,3 +136,7 @@ class ServeStack(Stack):
 
         CfnOutput(self, "ApiServiceUrl", value=f"https://{service.attr_service_url}")
         CfnOutput(self, "ApiImageUri", value=image.image_uri)
+        CfnOutput(self, "ApiKeySecretArn", value=api_key_secret.secret_arn)
+
+        self.service_url = f"https://{service.attr_service_url}"
+        self.api_key_secret = api_key_secret

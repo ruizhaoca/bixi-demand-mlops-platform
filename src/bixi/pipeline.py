@@ -1,9 +1,8 @@
 """Resumable, staged BIXI modeling pipeline.
 
-Stages: ingest -> features -> data -> train -> explain -> fairness -> drift -> register.
-The from-scratch rebuild is one command: ``python -m bixi.pipeline --from ingest``
-(ingest = raw download + 15-min demand cleaning; features = leakage-safe feature
-tables). The default run starts at ``data`` because both already live in S3.
+Stages: ingest -> features -> serving -> data -> train -> explain -> fairness ->
+drift -> register. A default run rebuilds everything from public source data;
+successful stages remain resumable through their S3 checkpoint markers.
 
 Each stage writes its outputs + a ``_SUCCESS`` marker to
 ``s3://<PIPELINE_BUCKET>/<PIPELINE_PREFIX>/runs/<run_id>/<target>/<stage>/`` so a
@@ -22,7 +21,7 @@ Examples
   python -m bixi.pipeline --targets departure --run-id 2024-prod --only drift --force
 
   # fast local smoke test on a station subsample
-  python -m bixi.pipeline --targets departure --run-id smoke \
+  python -m bixi.pipeline --from data --targets departure --run-id smoke \
       --local-dir ~/bixi_data --sample-stations 80 --n-trials 8 --flaml-budget 30
 """
 
@@ -119,6 +118,17 @@ def stage_features(ctx: Ctx) -> None:
     from . import feature_engineering
     written = feature_engineering.build_features_for_target(ctx.target, force=ctx.force)
     _log(f"[features] {ctx.target}: built/verified {len(written)} feature table(s)")
+
+
+def stage_serving(ctx: Ctx) -> None:
+    from . import serving_baselines
+
+    uri = serving_baselines.generate_for_target(
+        ctx.target,
+        ctx.run_id,
+        force=ctx.force,
+    )
+    _log(f"[serving] {ctx.target}: {uri}")
 
 
 def stage_data(ctx: Ctx) -> None:
@@ -287,6 +297,7 @@ def stage_register(ctx: Ctx) -> None:
 
 STAGE_FUNCS = {
     "ingest": stage_ingest, "features": stage_features,
+    "serving": stage_serving,
     "data": stage_data, "train": stage_train,
     "explain": stage_explain, "fairness": stage_fairness,
     "drift": stage_drift, "register": stage_register,

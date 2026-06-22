@@ -1,9 +1,7 @@
 """Raw-data ingestion stage: ensure the source BIXI trips + weather live in S3.
 
 This makes the pipeline reproducible from scratch instead of assuming a manual
-upload. It is **idempotent**: objects already in S3 are skipped. Because the good
-raw files already exist in ``s3://insy684`` (uploaded in Phase 1), the default run
-excludes this stage — run it explicitly with ``--only ingest`` to (re)materialise.
+upload. It is **idempotent**: objects already in S3 are skipped.
 
   * Weather: pulled from the Open-Meteo archive API (stable, parameterised) and
     resampled to 15-minute resolution.
@@ -28,7 +26,7 @@ WEATHER_HOURLY = ("temperature_2m,precipitation,wind_speed_10m,"
                   "relative_humidity_2m,weather_code")
 
 # Raw objects we expect to exist (matches the Phase-1 S3 layout).
-EXPECTED_TRIPS = [f"{config.RAW_PREFIX}/{y}/" for y in (2024, 2025, 2026)]
+EXPECTED_TRIPS = [f"{config.RAW_PREFIX}/{y}/" for y in (2024, 2025)]
 EXPECTED_WEATHER = [
     f"{config.WEATHER_PREFIX}/2024_weather_15min.csv",
     f"{config.WEATHER_PREFIX}/2025-may_weather_15min.csv",

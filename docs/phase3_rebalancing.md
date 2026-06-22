@@ -65,8 +65,9 @@ PYTHONPATH=src ./.venv/bin/python -m bixi.rebalancing --dayofweek 4 --top 30
 
 ## 4. Streamlit page
 
-`app.py` (and `app_ec2.py`, which reuses the same UI over S3 artifacts) gain a
-**Rebalancing Priorities** page:
+Both Streamlit deployments expose a **Rebalancing Priorities** page. `app.py`
+computes from packaged artifacts, while `app_fastapi_ec2.py` requests the result
+from the App Runner FastAPI service:
 
 * a **map** (`px.scatter_mapbox`, OpenStreetMap tiles, no token) colored by
   rebalancing need and sized by `risk_score`;
