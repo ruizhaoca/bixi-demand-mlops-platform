@@ -1,9 +1,8 @@
-"""S3-backed serving helpers for the EC2-only Streamlit deployment.
+"""S3-backed model-bundle loader for the App Runner FastAPI service.
 
 This module does not use the packaged local artifact bundle committed for
-Streamlit Community Cloud. It reads Phase-2 artifacts from S3 at app startup
-using the EC2 instance IAM role, then keeps the loaded model objects in the
-Streamlit process cache.
+Streamlit Community Cloud. In cloud mode, FastAPI reads the Phase-2 artifacts
+from S3 at App Runner startup through the App Runner instance IAM role.
 """
 
 from __future__ import annotations
@@ -40,7 +39,7 @@ class S3ArtifactConfig:
 
 
 def s3_artifact_config() -> S3ArtifactConfig:
-    """Read EC2 Streamlit artifact settings from environment variables."""
+    """Read App Runner S3 artifact settings from environment variables."""
     return S3ArtifactConfig(
         run_id=os.getenv("BIXI_RUN_ID", DEFAULT_RUN_ID),
         pipeline_bucket=os.getenv("BIXI_PIPELINE_BUCKET", DEFAULT_PIPELINE_BUCKET),

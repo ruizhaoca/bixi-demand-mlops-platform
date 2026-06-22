@@ -7,10 +7,10 @@ project turns a course-1 notebook prototype into a resumable, cloud-native pipel
 with full experiment tracking, a model registry, explainability, fairness analysis,
 four-type drift monitoring, containerization, CI/CD, and AWS infrastructure-as-code.
 
-**Live demos**
+**Deployment status**
 
 - Local Streamlit deployment (Community Cloud, packaged artifacts): https://bixidemandlocal.streamlit.app/
-- EC2 Streamlit deployment (S3-backed artifacts): http://3.16.250.166:8501/
+- Cloud serving: AWS runtime resources have been removed; the reproducible deployment pipeline is retained in this repository.
 
 ---
 
@@ -37,34 +37,51 @@ four-type drift monitoring, containerization, CI/CD, and AWS infrastructure-as-c
   tiers and geography, and **Evidently** drift reports (feature / target /
   prediction / concept).
 - **Containerized** training and serving images, a **GitHub Actions** CI pipeline,
-  and **AWS CDK** infrastructure (VPC, S3, MLflow on EC2, AWS Batch training).
+  and **AWS CDK** infrastructure (VPC, S3, MLflow on EC2, AWS Batch training,
+  and FastAPI on App Runner).
 
 ---
 
 ## Architecture
 
-```
-GitHub ──push──► GitHub Actions CI  (pytest + build training & Streamlit images)
+```text
+GitHub ──push──► GitHub Actions CI
+                 ├── pytest
+                 ├── build AWS Batch training image
+                 ├── build App Runner FastAPI image
+                 └── build EC2 Streamlit image + API contract smoke test
 
-AWS (us-east-2), provisioned by AWS CDK (infra/):
+AWS training and model lifecycle (us-east-2, provisioned by CDK):
   BixiNetwork  VPC (public subnets, no NAT)
-  BixiStorage  S3 pipeline bucket (checkpoints / artifacts / reports) + SSM param
+  BixiStorage  S3 pipeline bucket + SSM parameter
   BixiMlflow   MLflow tracking server on EC2 + S3 artifact store
-  BixiBatch    ECR training image + AWS Batch compute + job definition
-  BixiServe    FastAPI /predict service on App Runner (ECR image, no VPC)
+  BixiBatch    ECR training image + AWS Batch compute and job definition
+  BixiServe    ECR API image + App Runner FastAPI + IAM + Secrets Manager API key
 
-  AWS Batch runs `python -m bixi.pipeline` (docker/Dockerfile.train) over the full
-  dataset, reading source data from s3://insy684 and writing checkpoints, models,
-  explainability/fairness/drift artifacts to the CDK pipeline bucket; runs + models
-  are tracked in MLflow.
+Version A — long-term fallback:
+  Browser -> Streamlit Community Cloud (app.py) -> packaged local artifacts
 
-Serving (two independent deployment strategies, one shared model contract):
-  Version A: app.py — Streamlit Community Cloud, committed artifacts, no AWS runtime
-  Version B: app_fastapi_ec2.py — EC2 UI -> App Runner FastAPI -> S3 artifacts
-
-Rollback surface retained during migration:
-  app_ec2.py    EC2 Streamlit container — direct S3 loading and in-process prediction
+Version B — AWS cloud serving:
+  Browser -> EC2 Elastic IP:8501
+          -> Streamlit Docker container (app_fastapi_ec2.py)
+              ├── Open-Meteo forecast API (cached for 24 hours)
+              └── HTTPS + X-API-Key
+                  -> App Runner FastAPI (api/main.py)
+                      -> App Runner IAM role
+                          ├── CDK pipeline S3: model, encoder, metrics, monitoring
+                          └── insy684 S3: serving baseline parquet files
 ```
+
+The EC2 UI contains no model and has no direct S3 dependency. App Runner loads the
+Phase-2 bundles once at service startup and performs feature engineering, prediction,
+monitoring lookup, and rebalancing. Version A remains functional after AWS resources
+are removed because its artifacts are committed under `artifacts/`.
+
+> **App Runner lifecycle note (2026):** this repository documents a service that was
+> successfully deployed before teardown using an account with App Runner access. AWS
+> no longer accepts new App Runner customers and recommends ECS Express Mode for new deployments. The API
+> container and HTTP contract are portable to ECS without changing either model logic
+> or the Streamlit client.
 
 The pipeline is **staged and resumable**. Each stage writes a `_SUCCESS` marker to
 `s3://<pipeline-bucket>/bixi-mlops/runs/<run-id>/<target>/<stage>/`, so a run can be
@@ -108,22 +125,21 @@ at `data`** because the cleaned data and feature tables already live in S3.
 │   ├── rebalancing.py              # net-flow rebalancing priorities (dep+arr -> ranking)
 │   ├── fastapi_client.py            # HTTP client + bundle proxies for the API-backed UI
 │   ├── streamlit_local_serving.py  # local/packaged-artifact serving helpers
-│   └── streamlit_s3_serving.py     # S3-backed serving helpers (EC2)
+│   └── streamlit_s3_serving.py     # App Runner S3 model-bundle loader
 ├── app.py                          # Streamlit app (Community Cloud, packaged artifacts)
-├── app_ec2.py                      # Streamlit entrypoint (EC2 + S3 artifacts)
 ├── app_fastapi_ec2.py              # EC2 Streamlit UI backed only by FastAPI
 ├── api/main.py                     # FastAPI /predict service (App Runner serving tier)
 ├── artifacts/streamlit-community-cloud/cloud-2024/   # committed serving artifacts
 ├── docker/
 │   ├── Dockerfile.train            # AWS Batch / local training & pipeline image
-│   ├── Dockerfile.streamlit_ec2    # EC2 Streamlit serving image
 │   ├── Dockerfile.streamlit_fastapi # FastAPI-backed EC2 Streamlit image
 │   └── Dockerfile.api              # FastAPI serving image (App Runner)
 ├── infra/                          # AWS CDK app
 │   ├── app.py                      # BixiNetwork / BixiStorage / BixiMlflow / BixiBatch / BixiServe
 │   └── bixi_infra/                 # network / storage / mlflow / batch / serve stacks
 ├── scripts/                        # deploy_infra.sh, run_pipeline.sh, teardown.sh, ...
-├── docs/                           # design + ops guides (+ presentation assets)
+├── docs/                           # design, deployment, monitoring, and AWS evidence
+│   └── aws_deployment_evidence/    # archived, sanitized deployment screenshots
 ├── notebooks/02_modeling_drift.ipynb
 ├── tests/                          # pytest suite (synthetic data, no network)
 ├── requirements.txt                # Streamlit serving deps
@@ -147,7 +163,7 @@ s3://insy684/                         # PERSISTENT (source data + backups)
 ├── bixi-data/{2024,2025,2026}/       # raw BIXI open-data trip CSVs
 ├── weather-data/                     # 15-min Montreal weather (Open-Meteo)
 ├── processed-data/                   # 15-min demand CSVs + feature tables (parquet)
-├── bixi-serving-artifacts/           # serving baselines for the Streamlit apps
+├── bixi-serving-artifacts/           # App Runner baselines (+ packaged fallback source)
 └── bixi-mlops-backup/                # created by scripts/teardown.sh
 
 s3://<CDK pipeline bucket>/           # EPHEMERAL (cloud run outputs)
@@ -232,7 +248,8 @@ and **peak surplus** (docks needed / overflow risk). Stations are ranked by seve
 and tagged **needs bikes** or **needs docks** — a daily priority list for where a
 rebalancing truck adds the most value. It is scored under a neutral weather vector
 because net flow is robust to weather level (rain depresses departures and arrivals
-together). No AWS is required — it runs off the committed serving artifacts.
+together). Version A computes from committed bundles; Version B requests the same
+calculation from FastAPI, using S3-backed bundles loaded by App Runner.
 
 ```bash
 PYTHONPATH=src python -m bixi.rebalancing            # print the top-20 priorities (Tuesday)
@@ -262,9 +279,6 @@ occupancy trajectory), custom-input single predictions, and a model-monitoring p
   pip install -r requirements.txt
   streamlit run app.py
   ```
-- **`app_ec2.py`** — EC2 deployment. Reuses `app.py`'s UI but loads the same Phase-2
-  artifacts from S3. Containerized via `docker/Dockerfile.streamlit_ec2`; see
-  [`docs/ec2_streamlit_deployment_guide.md`](docs/ec2_streamlit_deployment_guide.md).
 - **`app_fastapi_ec2.py`** — API-backed EC2 deployment. The UI loads no model or S3
   artifacts; predictions, generated features, monitoring metadata, and rebalancing
   results come from the App Runner FastAPI service. See
@@ -274,7 +288,7 @@ occupancy trajectory), custom-input single predictions, and a model-monitoring p
 
 ## Prediction API (FastAPI · App Runner)
 
-The third serving tier is a thin **FastAPI** REST service (`api/main.py`) over the
+The cloud-serving backend is a thin **FastAPI** REST service (`api/main.py`) over the
 **same** model bundles as the Streamlit apps — `build_feature_row` + `predict_one`,
 no new ML logic, so predictions match across every surface. It is containerized via
 `docker/Dockerfile.api` and provisioned on **AWS App Runner** by the `BixiServe` CDK
@@ -283,6 +297,10 @@ stack (`infra/bixi_infra/serve_stack.py`).
 Serving mode is chosen at startup by `BIXI_SERVING_MODE`: `local` (default — the
 committed `artifacts/streamlit-community-cloud/cloud-2024/` bundle, no AWS) or `s3`
 (App Runner reads the bundle from S3 via the instance IAM role).
+
+In the deployed cloud service, `/health` is public. Every data and prediction
+endpoint requires an `X-API-Key`; CDK creates the key in AWS Secrets Manager and
+injects it into App Runner without committing it to the repository.
 
 ```bash
 pip install -r requirements-api.txt
@@ -316,9 +334,6 @@ gated step `cdk deploy BixiServe` (SSO creds) — see below.
 docker build -f docker/Dockerfile.train -t bixi-pipeline .
 docker run --rm bixi-pipeline --help
 
-# EC2 Streamlit serving image
-docker build -f docker/Dockerfile.streamlit_ec2 -t bixi-streamlit .
-
 # FastAPI-backed EC2 Streamlit UI
 docker build -f docker/Dockerfile.streamlit_fastapi -t bixi-streamlit-fastapi .
 
@@ -331,14 +346,22 @@ docker run --rm -e BIXI_SERVING_MODE=local -p 8000:8000 bixi-api   # curl :8000/
 
 ## Tests & CI
 
+The serving and training images intentionally use separate dependency sets. For a
+shared local test environment, install them in the same order as CI; the deployed
+Docker images remain isolated and install only their own runtime requirements.
+
 ```bash
-pip install -r requirements-train.txt pytest
+pip install -r requirements.txt
+pip install -r requirements-streamlit-api.txt
+pip install -r requirements-api.txt
+pip install -r requirements-train.txt
+pip install pytest
 pytest -q tests/
 ```
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on pull requests to `main`, pushes,
 and manual dispatch: it installs deps, runs the test suite, builds the training,
-direct-S3 Streamlit, FastAPI-backed Streamlit, and API images, then smoke-tests the
+FastAPI-backed Streamlit and API images, then smoke-tests the
 pipeline, API, and Streamlit-to-FastAPI contract without AWS.
 Team guide: [`docs/github_actions_guide.md`](docs/github_actions_guide.md).
 
@@ -348,16 +371,16 @@ Team guide: [`docs/github_actions_guide.md`](docs/github_actions_guide.md).
 
 - Phase-2 modeling design & decisions: [`docs/phase2_modeling.md`](docs/phase2_modeling.md)
 - Phase-3 net-flow rebalancing layer: [`docs/phase3_rebalancing.md`](docs/phase3_rebalancing.md)
-- EC2 Streamlit deployment: [`docs/ec2_streamlit_deployment_guide.md`](docs/ec2_streamlit_deployment_guide.md)
-- FastAPI-backed Streamlit deployment: [`docs/fastapi_streamlit_deployment_guide.md`](docs/fastapi_streamlit_deployment_guide.md)
-- Model / S3 / EC2 operations: [`docs/model_s3_ec2_operations_guide.md`](docs/model_s3_ec2_operations_guide.md)
+- EC2 Streamlit + App Runner FastAPI deployment: [`docs/fastapi_streamlit_deployment_guide.md`](docs/fastapi_streamlit_deployment_guide.md)
+- Archived AWS deployment screenshots: [`docs/aws_deployment_evidence/`](docs/aws_deployment_evidence/)
 - GitHub Actions / CI: [`docs/github_actions_guide.md`](docs/github_actions_guide.md)
 
 ### Security
 
-No AWS credentials are committed. Code uses the default boto3 credential chain — SSO
-locally, an attached IAM role on EC2 / AWS Batch. `.env` is git-ignored; only
-`.env.example` (a template) is tracked.
+No AWS credentials are committed. Local infrastructure commands use IAM Identity
+Center (SSO); AWS Batch and App Runner use service IAM roles. The EC2 Streamlit UI
+does not access S3 and receives only the App Runner URL and API key at runtime.
+`.env` and Streamlit secrets are git-ignored; `.env.example` is an empty template.
 
 ---
 

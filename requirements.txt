@@ -1,4 +1,4 @@
-# Streamlit serving dependencies (app.py on Streamlit Community Cloud, app_ec2.py on EC2).
+# Streamlit Community Cloud dependencies for app.py and its packaged artifacts.
 #
 # IMPORTANT — why these are NOT capped below the latest generation:
 # Streamlit Community Cloud currently provisions **Python 3.14**, which only ships
@@ -10,8 +10,8 @@
 # from sdist) -> the app showed "Oh no. Error running app."
 #
 # These exact versions are the set Cloud resolves on Python 3.14; they also ship
-# wheels for Python 3.12 (CI + the EC2 Docker image) and are verified end-to-end to
-# load the committed model artifacts and run every page of the app.
+# wheels for Python 3.12 (CI) and are verified end-to-end to load the committed
+# model artifacts and run every page of the app.
 streamlit==1.58.0
 pandas==3.0.3
 numpy==2.4.6

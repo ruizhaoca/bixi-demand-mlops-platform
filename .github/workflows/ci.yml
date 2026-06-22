@@ -35,9 +35,6 @@ jobs:
       - name: Build training / pipeline image
         run: docker build -f docker/Dockerfile.train -t bixi-pipeline .
 
-      - name: Build Streamlit (EC2) image
-        run: docker build -f docker/Dockerfile.streamlit_ec2 -t bixi-streamlit .
-
       - name: Build FastAPI-backed Streamlit image
         run: docker build -f docker/Dockerfile.streamlit_fastapi -t bixi-streamlit-fastapi .
 

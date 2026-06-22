@@ -1,6 +1,6 @@
 """App Runner serving tier for the BIXI demand FastAPI service.
 
-This is the third serving surface (alongside the two Streamlit deployments): the
+This stack deploys the backend for the EC2 Streamlit cloud application: the
 ``api/`` FastAPI app, containerized via ``docker/Dockerfile.api`` and run on
 **AWS App Runner** — no VPC needed (App Runner reaches S3 over the public AWS
 API). Mirrors the ``DockerImageAsset`` + IAM + ``CfnOutput`` pattern in
