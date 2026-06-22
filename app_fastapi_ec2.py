@@ -35,6 +35,7 @@ from bixi.fastapi_client import (  # noqa: E402
     slot_label,
     timestamp_for,
 )
+from bixi.time_utils import montreal_today  # noqa: E402
 
 
 APP_TITLE = "BIXI 7-Day Demand Prediction"
@@ -118,7 +119,7 @@ def fetch_weather_forecast() -> tuple[pd.DataFrame, dict]:
     If the API is unavailable, return a conservative default forecast so the app
     can still be demoed locally.
     """
-    today = dt.date.today()
+    today = montreal_today()
     full_index = pd.date_range(
         start=pd.Timestamp(today),
         periods=7 * SLOTS_PER_DAY,
@@ -224,12 +225,12 @@ def build_day_predictions(bundles, station_name: str, date_value: dt.date, weath
 
 
 def date_bounds() -> tuple[dt.date, dt.date]:
-    today = dt.date.today()
+    today = montreal_today()
     return today, today + dt.timedelta(days=6)
 
 
 def custom_input_date_bounds() -> tuple[dt.date, dt.date]:
-    today = dt.date.today()
+    today = montreal_today()
     return today, today + dt.timedelta(days=365)
 
 
