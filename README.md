@@ -35,6 +35,8 @@ AWS training and model lifecycle (us-east-2, provisioned by CDK):
 
 Version A — long-term fallback:
   Browser -> Streamlit Community Cloud (app.py) -> packaged local artifacts
+              ├── Open-Meteo forecast API (cached for 24 hours)
+              └── packaged local artifacts
 
 Version B — AWS cloud serving:
   Browser -> EC2 Elastic IP:8501
