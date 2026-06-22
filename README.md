@@ -51,10 +51,6 @@ Version B — AWS cloud serving:
 
 The EC2 UI contains no model and has no direct S3 dependency. App Runner loads the Phase-2 bundles once at service startup and performs feature engineering, prediction, monitoring lookup, and rebalancing. Version A remains functional after AWS resources are removed because its artifacts are committed under `artifacts/`.
 
-> **App Runner lifecycle note (2026):** this rebuild path requires an AWS account
-> that already has App Runner access. For new customers, the same API container and
-> HTTP contract can be deployed with ECS Express Mode instead.
-
 ```
 ingest -> features -> serving -> data -> train -> explain -> fairness -> drift -> register
 ```
@@ -123,9 +119,6 @@ when resuming a partially completed run.
 
 ## Rebuild from an empty AWS environment
 
-No existing bucket, feature table, model, API, or EC2 instance is required. The
-pipeline reconstructs every cloud artifact from public BIXI and Open-Meteo data.
-
 ### Automated deployment (recommended)
 
 From Windows PowerShell, the orchestrator bootstraps CDK, creates the rebuild
@@ -182,7 +175,7 @@ Cloud app remains available because its artifacts are committed to the repositor
 | Arrival | Validation (May 2025) | 0.339 | 0.976 | 0.554 |
 | Arrival | Test (Oct 2025) | 0.339 | 1.026 | 0.585 |
 
-Both targets select `lgbm_optuna`. SHAP attributes most signal to the 2024 historical baselines and the cyclical time-of-day features, with weather as a secondary driver.
+Both targets select lgbm_optuna. With an RMSE of approximately one trip per 15-minute slot, both models capture general demand patterns despite the inherent short-term variability of station-level demand. SHAP analysis identifies the 2024 historical baselines and cyclical time-of-day features as the strongest predictors, with weather playing a secondary role.
 
 ---
 
