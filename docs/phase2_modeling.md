@@ -1,6 +1,6 @@
 # Phase 2 — Predictive Modeling, MLflow, Explainability, Fairness & Drift
 
-Owner: **Othmane Zizi** (`othmane-zizi-pro`). Branch: `phase-2-modeling-drift`.
+Owner: **Othmane Zizi** (`othmane-zizi-pro`).
 
 This phase turns the Phase-1 15-minute feature tables into a production-grade,
 **fully cloud-deployable and resumable** modeling pipeline: multi-model + AutoML +
@@ -14,12 +14,14 @@ Stages, each checkpointed to S3 with a `_SUCCESS` marker so any run resumes from
 any step:
 
 ```
-ingest -> data -> train -> explain -> fairness -> drift -> register
+ingest -> features -> serving -> data -> train -> explain -> fairness -> drift -> register
 ```
 
 | Stage | What it does |
 |---|---|
-| `ingest` | (reproducibility) ensure raw BIXI trips + Open-Meteo weather are in S3; idempotent. Excluded from the default run since the good raw files already exist. |
+| `ingest` | Download public BIXI trips and Open-Meteo weather, then build cleaned 15-minute demand tables in the CDK data bucket. |
+| `features` | Build leakage-safe train/validation/test feature tables. |
+| `serving` | Build compact station/weekday/slot baselines for future online predictions. |
 | `data` | load each split, **filter to its intended (year, month)** (hardens against the Phase-1 date spillover), fit **leakage-safe** station encodings on TRAIN only, persist encoder + tiers. |
 | `train` | naive baseline → LightGBM (L2/Poisson/Tweedie) + XGBoost + HistGB candidates → **FLAML AutoML** → **Optuna** HPO; select best by validation RMSE; evaluate on test; log everything to MLflow. |
 | `explain` | SHAP global (beeswarm/bar) + local (waterfall) + LIME; artifacts → S3. |
@@ -31,14 +33,14 @@ Run the whole thing, or resume / run one step:
 
 ```bash
 # whole pipeline, both targets, in the cloud (AWS Batch)
-./scripts/run_pipeline.sh --targets both --run-id 2024-prod
+./scripts/run_pipeline.sh
 
 # resume from training; re-run only drift
-./scripts/run_pipeline.sh --run-id 2024-prod --from train
-./scripts/run_pipeline.sh --run-id 2024-prod --only drift --force
+./scripts/run_pipeline.sh --run-id cloud-2024 --from train
+./scripts/run_pipeline.sh --run-id cloud-2024 --only drift --force
 
 # fast local subsample (identical code path)
-python -m bixi.pipeline --targets departure --run-id smoke \
+python -m bixi.pipeline --from data --targets departure --run-id smoke \
   --local-dir ~/bixi_data --sample-stations 80 --n-trials 8 --flaml-budget 30
 ```
 
@@ -81,17 +83,21 @@ labelled data.
 | Stack | Resource |
 |---|---|
 | `BixiNetwork` | VPC, public subnets, **no NAT** (≈$0). |
-| `BixiStorage` | S3 bucket for checkpoints / model artifacts / MLflow artifacts / reports. |
-| `BixiMlflow` | MLflow tracking server on EC2 `t3.small` + S3 artifact store, Elastic IP, SG locked to the team CIDR. |
+| `BixiStorage` | CDK-managed data bucket plus pipeline/model artifact bucket. |
+| `BixiMlflow` | MLflow tracking server on EC2 `t3.medium` + S3 artifact store, Elastic IP, SG locked to the team CIDR. |
 | `BixiBatch` | ECR training image (built by CDK) + AWS Batch managed EC2 compute + job definition. |
+| `BixiServe` | App Runner FastAPI, ECR image, read-only S3 IAM role, and Secrets Manager API key. |
+| `BixiUi` | EC2 Streamlit container, Elastic IP, and Systems Manager access. |
 
-Deploy: `BIXI_ALLOW_CIDR=<your-ip>/32 ./scripts/deploy_infra.sh`.
-Teardown: `./scripts/teardown.sh` — backs up all artifacts + an MLflow run snapshot
-to `s3://insy684/bixi-mlops-backup/` (the CDK pipeline bucket auto-deletes on
-destroy), then runs `cdk destroy --all`. Use `--backup-only` to keep the infra.
+Deploy from an empty account/region after merging to `main`:
 
-Source feature data is read from the existing `s3://insy684` bucket; everything
-else is created and destroyed by CDK.
+```powershell
+.\scripts\deploy_from_scratch.ps1 -AwsProfile bixi -Region us-east-2
+```
+
+The orchestrator deploys storage/training first, waits for Batch to succeed, and
+then deploys App Runner and the EC2 UI. `./scripts/teardown.sh` destroys every BIXI
+stack and both buckets. No pre-existing S3 data is required.
 
 ## 6. Known data issues flagged to Phase 1 (Rui)
 

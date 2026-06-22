@@ -5,7 +5,7 @@ the minimal serving bundle needed for the Streamlit app to run without AWS
 resources after teardown:
 
 * Phase-2 model checkpoints and encoders from the CDK pipeline bucket.
-* Compact 2026 serving baselines from the persistent ``insy684`` bucket.
+* Compact serving baselines from the CDK-managed data bucket.
 * Small JSON/CSV metadata for the monitoring page.
 
 Presentation images already committed under ``docs/presentation`` are not
@@ -30,8 +30,8 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 from bixi import config  # noqa: E402
 
 
-DEFAULT_PIPELINE_BUCKET = "bixistorage-pipelinebucketb967bd35-icnkid23rfsa"
-DEFAULT_DATA_BUCKET = "insy684"
+DEFAULT_PIPELINE_BUCKET = "auto"
+DEFAULT_DATA_BUCKET = "auto"
 DEFAULT_PIPELINE_PREFIX = "bixi-mlops"
 DEFAULT_BASELINE_PREFIX = "bixi-serving-artifacts"
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "artifacts" / "streamlit-community-cloud"
@@ -60,6 +60,20 @@ def load_env_file(path: Path | None) -> None:
         value = value.strip().strip('"').strip("'")
         if key and key not in os.environ:
             os.environ[key] = value
+
+
+def resolve_bucket_name(
+    ssm_client,
+    requested: str,
+    *,
+    env_name: str,
+    parameter_name: str,
+) -> str:
+    if requested != "auto":
+        return requested
+    if os.getenv(env_name):
+        return os.environ[env_name]
+    return ssm_client.get_parameter(Name=parameter_name)["Parameter"]["Value"]
 
 
 def s3_object_info(s3_client, bucket: str, key: str) -> dict | None:
@@ -287,6 +301,19 @@ def main() -> None:
     load_env_file(Path(args.env_file) if args.env_file else None)
 
     s3_client = boto3.client("s3", region_name=args.region)
+    ssm_client = boto3.client("ssm", region_name=args.region)
+    args.pipeline_bucket = resolve_bucket_name(
+        ssm_client,
+        args.pipeline_bucket,
+        env_name="BIXI_PIPELINE_BUCKET",
+        parameter_name="/bixi/pipeline-bucket",
+    )
+    args.data_bucket = resolve_bucket_name(
+        ssm_client,
+        args.data_bucket,
+        env_name="BIXI_DATA_BUCKET",
+        parameter_name="/bixi/data-bucket",
+    )
     output_root = Path(args.output_root)
     if not output_root.is_absolute():
         output_root = (REPO_ROOT / output_root).resolve()

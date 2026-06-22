@@ -35,7 +35,7 @@ class ServeStack(Stack):
         cid: str,
         *,
         pipeline_bucket: s3.IBucket,
-        data_bucket_name: str = "insy684",
+        data_bucket: s3.IBucket,
         run_id: str = "cloud-2024",
         **kwargs,
     ) -> None:
@@ -64,7 +64,6 @@ class ServeStack(Stack):
             assumed_by=iam.ServicePrincipal("tasks.apprunner.amazonaws.com"),
         )
         pipeline_bucket.grant_read(instance_role)
-        data_bucket = s3.Bucket.from_bucket_name(self, "DataBucket", data_bucket_name)
         data_bucket.grant_read(instance_role)
         instance_role.add_to_policy(
             iam.PolicyStatement(
@@ -88,7 +87,7 @@ class ServeStack(Stack):
             "BIXI_SERVING_MODE": "s3",
             "BIXI_RUN_ID": run_id,
             "BIXI_PIPELINE_BUCKET": pipeline_bucket.bucket_name,
-            "BIXI_DATA_BUCKET": data_bucket_name,
+            "BIXI_DATA_BUCKET": data_bucket.bucket_name,
             "AWS_REGION": self.region,
         }
         env_pairs = [
@@ -138,3 +137,6 @@ class ServeStack(Stack):
         CfnOutput(self, "ApiServiceUrl", value=f"https://{service.attr_service_url}")
         CfnOutput(self, "ApiImageUri", value=image.image_uri)
         CfnOutput(self, "ApiKeySecretArn", value=api_key_secret.secret_arn)
+
+        self.service_url = f"https://{service.attr_service_url}"
+        self.api_key_secret = api_key_secret

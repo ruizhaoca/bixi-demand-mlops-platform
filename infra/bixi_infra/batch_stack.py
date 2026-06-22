@@ -25,7 +25,8 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 class BatchStack(Stack):
     def __init__(self, scope: Construct, cid: str, *, vpc: ec2.IVpc,
-                 pipeline_bucket: s3.IBucket, data_bucket_name: str = "insy684",
+                 pipeline_bucket: s3.IBucket, data_bucket: s3.IBucket,
+                 run_id: str = "cloud-2024",
                  **kwargs) -> None:
         super().__init__(scope, cid, **kwargs)
 
@@ -52,12 +53,11 @@ class BatchStack(Stack):
         queue = batch.JobQueue(self, "JobQueue", priority=1)
         queue.add_compute_environment(compute_env, 1)
 
-        # Container task role: read source data, read/write pipeline outputs.
+        # The from-scratch stages download and materialize raw/clean/feature data.
         job_role = iam.Role(self, "JobRole",
                             assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"))
         pipeline_bucket.grant_read_write(job_role)
-        data_bucket = s3.Bucket.from_bucket_name(self, "DataBucket", data_bucket_name)
-        data_bucket.grant_read(job_role)
+        data_bucket.grant_read_write(job_role)
         job_role.add_to_policy(iam.PolicyStatement(
             actions=["ssm:GetParameter"],
             resources=[f"arn:aws:ssm:{self.region}:{self.account}:parameter/bixi/*"]))
@@ -68,10 +68,13 @@ class BatchStack(Stack):
             cpu=16,
             memory=Size.mebibytes(48000),
             job_role=job_role,
-            command=["--targets", "both", "--run-id", "cloud", "--n-trials", "40"],
+            command=["--from", "ingest", "--targets", "both", "--run-id", run_id,
+                     "--n-trials", "40"],
             environment={
                 "BIXI_PIPELINE_BUCKET": pipeline_bucket.bucket_name,
-                "BIXI_DATA_BUCKET": data_bucket_name,
+                "BIXI_DATA_BUCKET": data_bucket.bucket_name,
+                "BIXI_RUN_ID": run_id,
+                "AWS_REGION": self.region,
                 "AWS_DEFAULT_REGION": self.region,
             },
             logging=ecs.LogDrivers.aws_logs(stream_prefix="bixi-pipeline"),
